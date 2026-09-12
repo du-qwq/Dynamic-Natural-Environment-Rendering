@@ -1,0 +1,234 @@
+#pragma kernel GenerateTransmittance
+#pragma kernel GenerateSkyView
+
+RWTexture2D<float4> _TransmittanceLUT;
+Texture2D<float4> _TransmittanceLUTRead;
+RWTexture2D<float4> _SkyViewLUT;
+
+int _TransmittanceWidth;
+int _TransmittanceHeight;
+int _SkyViewWidth;
+int _SkyViewHeight;
+
+float _PlanetRadius;
+float _AtmosphereHeight;
+float _RayleighScaleHeight;
+float _MieScaleHeight;
+float _RayleighStrength;
+float _MieStrength;
+float _MieAbsorptionStrength;
+float _OzoneStrength;
+float _MieG;
+float _SunIntensity;
+float _CameraHeight;
+float3 _SunDirWS;
+
+static const float PI = 3.14159265359;
+static const float3 BETA_R = float3(5.802e-6, 13.558e-6, 33.100e-6);
+static const float3 BETA_M_S = float3(3.996e-6, 3.996e-6, 3.996e-6);
+static const float3 BETA_M_A = float3(4.400e-6, 4.400e-6, 4.400e-6);
+static const float3 BETA_O3 = float3(0.650e-6, 1.881e-6, 0.085e-6);
+
+bool RaySphere(float3 ro, float3 rd, float radius, out float tNear, out float tFar)
+{
+    float b = dot(ro, rd);
+    float c = dot(ro, ro) - radius * radius;
+    float d = b * b - c;
+
+    if (d < 0.0)
+    {
+        tNear = 0.0;
+        tFar = 0.0;
+        return false;
+    }
+
+    float s = sqrt(d);
+    tNear = -b - s;
+    tFar = -b + s;
+    return true;
+}
+
+float DensityRayleigh(float height)
+{
+    return exp(-max(height, 0.0) / max(_RayleighScaleHeight, 1.0));
+}
+
+float DensityMie(float height)
+{
+    return exp(-max(height, 0.0) / max(_MieScaleHeight, 1.0));
+}
+
+float DensityOzone(float height)
+{
+    return saturate(1.0 - abs(height - 25000.0) / 15000.0);
+}
+
+float3 GetExtinction(float height)
+{
+    float densityR = DensityRayleigh(height);
+    float densityM = DensityMie(height);
+    float densityO = DensityOzone(height);
+
+    float3 rayleigh = BETA_R * _RayleighStrength * densityR;
+    float3 mie = (BETA_M_S * _MieStrength + BETA_M_A * _MieAbsorptionStrength) * densityM;
+    float3 ozone = BETA_O3 * _OzoneStrength * densityO;
+
+    return rayleigh + mie + ozone;
+}
+
+float3 SampleTransmittance(float radius, float mu)
+{
+    float height = saturate((radius - _PlanetRadius) / max(_AtmosphereHeight, 1.0));
+    float u = saturate(mu * 0.5 + 0.5);
+
+    int x = clamp((int)(u * (_TransmittanceWidth - 1)), 0, _TransmittanceWidth - 1);
+    int y = clamp((int)(height * (_TransmittanceHeight - 1)), 0, _TransmittanceHeight - 1);
+
+    return _TransmittanceLUTRead.Load(int3(x, y, 0)).rgb;
+}
+
+float PhaseRayleigh(float cosTheta)
+{
+    return 3.0 / (16.0 * PI) * (1.0 + cosTheta * cosTheta);
+}
+
+float PhaseMie(float cosTheta)
+{
+    float g = clamp(_MieG, -0.98, 0.98);
+    float g2 = g * g;
+    float denominator = pow(max(1.0 + g2 - 2.0 * g * cosTheta, 0.001), 1.5);
+    return (1.0 - g2) / (4.0 * PI * denominator);
+}
+
+[numthreads(8, 8, 1)]
+void GenerateTransmittance(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _TransmittanceWidth || id.y >= _TransmittanceHeight) return;
+
+    float2 uv = (float2(id.xy) + 0.5) / float2(_TransmittanceWidth, _TransmittanceHeight);
+
+    float radius = _PlanetRadius + uv.y * _AtmosphereHeight;
+    float mu = uv.x * 2.0 - 1.0;
+    float sinTheta = sqrt(saturate(1.0 - mu * mu));
+
+    float3 origin = float3(0.0, radius, 0.0);
+    float3 direction = normalize(float3(sinTheta, mu, 0.0));
+
+    float atmosphereRadius = _PlanetRadius + _AtmosphereHeight;
+    float topNear, topFar;
+
+    if (!RaySphere(origin, direction, atmosphereRadius, topNear, topFar))
+    {
+        _TransmittanceLUT[id.xy] = float4(1, 1, 1, 1);
+        return;
+    }
+
+    float topDistance = max(topFar, 0.0);
+
+    float groundNear, groundFar;
+    if (RaySphere(origin, direction, _PlanetRadius, groundNear, groundFar))
+    {
+        float groundDistance = groundNear > 0.0 ? groundNear : groundFar;
+
+        if (groundDistance > 0.0 && groundDistance < topDistance)
+        {
+            _TransmittanceLUT[id.xy] = float4(0, 0, 0, 1);
+            return;
+        }
+    }
+
+    const int SAMPLE_COUNT = 64;
+    float dt = topDistance / SAMPLE_COUNT;
+    float3 opticalDepth = 0.0;
+
+    [loop]
+    for (int i = 0; i < SAMPLE_COUNT; i++)
+    {
+        float t = (i + 0.5) * dt;
+        float3 p = origin + direction * t;
+        float height = max(length(p) - _PlanetRadius, 0.0);
+        opticalDepth += GetExtinction(height) * dt;
+    }
+
+    float3 transmittance = exp(-opticalDepth);
+    _TransmittanceLUT[id.xy] = float4(transmittance, 1.0);
+}
+
+[numthreads(8, 8, 1)]
+void GenerateSkyView(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= _SkyViewWidth || id.y >= _SkyViewHeight) return;
+
+    float2 uv = (float2(id.xy) + 0.5) / float2(_SkyViewWidth, _SkyViewHeight);
+
+    float azimuth = (uv.x - 0.5) * 2.0 * PI;
+    float elevation = (uv.y - 0.5) * PI;
+
+    float cosElevation = cos(elevation);
+
+    float3 viewDir = normalize(float3(
+        cosElevation * cos(azimuth),
+        sin(elevation),
+        cosElevation * sin(azimuth)
+    ));
+
+    float cameraRadius = _PlanetRadius + clamp(_CameraHeight, 0.0, _AtmosphereHeight - 1.0);
+    float3 origin = float3(0.0, cameraRadius, 0.0);
+
+    float atmosphereRadius = _PlanetRadius + _AtmosphereHeight;
+
+    float topNear, topFar;
+    if (!RaySphere(origin, viewDir, atmosphereRadius, topNear, topFar))
+    {
+        _SkyViewLUT[id.xy] = float4(0, 0, 0, 1);
+        return;
+    }
+
+    float maxDistance = max(topFar, 0.0);
+
+    float groundNear, groundFar;
+    if (RaySphere(origin, viewDir, _PlanetRadius, groundNear, groundFar))
+    {
+        float groundDistance = groundNear > 0.0 ? groundNear : groundFar;
+        if (groundDistance > 0.0) maxDistance = min(maxDistance, groundDistance);
+    }
+
+    const int VIEW_SAMPLE_COUNT = 24;
+    float dt = maxDistance / VIEW_SAMPLE_COUNT;
+
+    float3 radiance = 0.0;
+    float3 viewTransmittance = 1.0;
+
+    float cosTheta = dot(viewDir, normalize(_SunDirWS));
+    float phaseR = PhaseRayleigh(cosTheta);
+    float phaseM = PhaseMie(cosTheta);
+
+    [loop]
+    for (int i = 0; i < VIEW_SAMPLE_COUNT; i++)
+    {
+        float t = (i + 0.5) * dt;
+        float3 p = origin + viewDir * t;
+
+        float radius = length(p);
+        float height = max(radius - _PlanetRadius, 0.0);
+        float3 up = p / max(radius, 0.001);
+
+        float densityR = DensityRayleigh(height);
+        float densityM = DensityMie(height);
+
+        float muSun = dot(up, normalize(_SunDirWS));
+        float3 sunTransmittance = SampleTransmittance(radius, muSun);
+
+        float3 rayleighScattering = BETA_R * _RayleighStrength * densityR * phaseR;
+        float3 mieScattering = BETA_M_S * _MieStrength * densityM * phaseM;
+        float3 extinction = GetExtinction(height);
+
+        float3 halfStepTransmittance = exp(-extinction * dt * 0.5);
+        float3 sampleTransmittance = viewTransmittance * halfStepTransmittance;
+
+        radiance += sampleTransmittance * sunTransmittance * (rayleighScattering + mieScattering) * _SunIntensity * dt;
+        viewTransmittance *= exp(-extinction * dt);
+    }
+
+    _SkyViewLUT[id.xy] = float4(max(radiance, 0.0), 1.0);
+}

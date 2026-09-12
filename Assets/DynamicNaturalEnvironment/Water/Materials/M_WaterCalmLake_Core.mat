@@ -27,24 +27,38 @@ Material:
         m_Texture: {fileID: 2800000, guid: 275439a50af34d84ba3ff15dc027860d, type: 3}
         m_Scale: {x: 1, y: 1}
         m_Offset: {x: 0, y: 0}
+    - _PlanarReflectionTex:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
     m_Ints: []
     m_Floats:
     - _AbsorptionStrength: 0.18
     - _AlphaDepthRange: 7
     - _DeepAlpha: 0.92
     - _DepthColorRange: 9
-    - _FresnelPower: 4
-    - _FresnelStrength: 0.72
+    - _FresnelPower: 5
+    - _FresnelStrength: 1
     - _NormalStrength: 0.34
     - _NormalWorldTiling: 0.12
+    - _PlanarReflectionDistort: 0.0015
+    - _PlanarReflectionReady: 0
+    - _PlanarReflectionStrength: 0.65
+    - _ReflectionMinimum: 0.05
     - _ReflectionStrength: 0.34
+    - _RefractionDepthRange: 4
+    - _RefractionStrength: 0.003
     - _ScatterStrength: 0.28
     - _ShallowAlpha: 0.52
-    - _SpecularPower: 72
-    - _SpecularStrength: 1.15
+    - _ShallowTransmission: 0.72
+    - _ShoreFadeRange: 2.5
+    - _ShoreTransparency: 0.16
+    - _SpecularPower: 96
+    - _SpecularStrength: 0.65
+    - _TransmissionTintStrength: 0.18
     m_Colors:
     - _DeepColor: {r: 0.015, g: 0.14, b: 0.22, a: 1}
-    - _FlowSpeed: {r: 0.018, g: 0.012, b: 0, a: 0}
+    - _FlowSpeed: {r: 0.12, g: 0.06, b: 0, a: 0}
     - _ReflectionTint: {r: 0.53, g: 0.69, b: 0.82, a: 1}
     - _ScatterColor: {r: 0.035, g: 0.28, b: 0.27, a: 1}
     - _ShallowColor: {r: 0.16, g: 0.5, b: 0.56, a: 1}
