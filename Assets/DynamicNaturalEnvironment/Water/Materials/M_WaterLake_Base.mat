@@ -1,0 +1,147 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!21 &2100000
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: M_WaterLake_Base
+  m_Shader: {fileID: 4800000, guid: 8a2084cfc8dd10c4588ce86d181b5b52, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords: []
+  m_InvalidKeywords: []
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: -1
+  stringTagMap: {}
+  disabledShaderPasses:
+  - MOTIONVECTORS
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs:
+    - _CausticsTex:
+        m_Texture: {fileID: 2800000, guid: f8d0ff3610e3e74439674420f2da7db6, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _FoamTex:
+        m_Texture: {fileID: 2800000, guid: 4551517843a07a64c9e81d20a345a0fe, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _NormalTex:
+        m_Texture: {fileID: 2800000, guid: c8577627c939114458255c690dbde327, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _PlanarReflectionTex:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _RippleFieldTex:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _RippleNormalTex:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    m_Ints: []
+    m_Floats:
+    - RippleColorStrength: 0.35
+    - _AbsorptionStrength: 0.72
+    - _AlphaDepthRange: 3.5
+    - _CausticsChromaticStrength: 0.6
+    - _CausticsDepthRange: 100
+    - _CausticsDispersion: 0.0095
+    - _CausticsSharpness: 3.59
+    - _CausticsSpeed: 0.25
+    - _CausticsStrength: 0
+    - _CausticsTiling: 0.2
+    - _CrestFoamSpeed: 0.2
+    - _CrestFoamStrength: 0
+    - _CrestFoamTiling: 0.055
+    - _CrestSlopeStrength: 0.25
+    - _CrestSoftness: 0.24
+    - _CrestThreshold: 0.01
+    - _DepthColorRange: 7
+    - _DepthScale: 1
+    - _EnvReflectionRoughness: 0.2
+    - _FoamContrast: 2
+    - _FoamCutoff: 0.45
+    - _FoamDistortStrength: 0.04
+    - _FoamRange: 0.82
+    - _FoamSoftness: 2.24
+    - _FoamSpeed: 0.15
+    - _FoamStrength: 0.18
+    - _FoamTiling: 0.055
+    - _FresnelPower: 3
+    - _FresnelStrength: 0.55
+    - _MaxAlpha: 0.96
+    - _MinAlpha: 0.62
+    - _NormalRefract: 0.07
+    - _NormalScale: 0.55
+    - _NormalTiling: 0.1
+    - _PlanarReflectionBlend: 0
+    - _PlanarReflectionDistort: 0.02
+    - _ReflectionFloor: 0.03
+    - _ReflectionStrength: 0.45
+    - _RefractStrength: 0.014
+    - _RefractionMix: 0.35
+    - _RefractionWeight: 0.18
+    - _RippleColorStrength: 0.99
+    - _RippleFieldColorStrength: 0
+    - _RippleFieldCrestFoamInfluence: 0
+    - _RippleFieldFoamStrength: 0
+    - _RippleFieldNormalStrength: 0
+    - _RippleFieldRefractStrength: 0
+    - _RippleFieldShoreFoamInfluence: 0
+    - _RippleFrequency: 18
+    - _RippleLifetime: 3
+    - _RippleNormalStrength: 0.12
+    - _RippleNormalTexStrength: 1
+    - _RippleSpeed: 2
+    - _RippleStartTime: 32.252148
+    - _RippleWidth: 12
+    - _ScatterStrength: 0.85
+    - _ShoreScatterStrength: 0.12
+    - _SpecularPower: 48
+    - _SpecularStrength: 2
+    - _WakeFoamColorStrength: 1.2
+    - _WaveSpeedA: 0.18
+    - _WaveSpeedB: 0.27
+    - _WaveXSpeed: 0.05
+    - _WaveYSpeed: 0.08
+    m_Colors:
+    - _AbsorptionColor: {r: 0.72, g: 0.29999998, b: 0.10999996, a: 1}
+    - _AbsorptionTint: {r: 0.079999976, g: 0.54999995, b: 0.65, a: 1}
+    - _BaseColor: {r: 0.03, g: 0.38, b: 0.48, a: 1}
+    - _CausticsColor: {r: 1, g: 1, b: 0.85, a: 1}
+    - _CrestFoamColor: {r: 1, g: 1, b: 1, a: 1}
+    - _DeepColor: {r: 0.012, g: 0.11, b: 0.17, a: 1}
+    - _FoamColor: {r: 1, g: 1, b: 1, a: 1}
+    - _ReflectionTint: {r: 0.7, g: 0.85, b: 1, a: 1}
+    - _RippleAreaCenterWS: {r: 489, g: 1.44, b: 501, a: 0}
+    - _RippleAreaSize: {r: 993.30005, g: 993.30005, b: 0, a: 0}
+    - _RippleColor: {r: 1, g: 1, b: 1, a: 1}
+    - _RippleOriginWS: {r: 24.3, g: 3.602, b: 20.06, a: 0}
+    - _ScatterColor: {r: 0.025, g: 0.41999996, b: 0.35999998, a: 1}
+    - _ShallowColor: {r: 0.08, g: 0.48, b: 0.52, a: 1}
+    - _WaveA: {r: 1, g: 0.45, b: 0.035, a: 45}
+    - _WaveB: {r: 0.45, g: 1, b: 0.02, a: 24}
+  m_BuildTextureStacks: []
+--- !u!114 &8039417025105655562
+MonoBehaviour:
+  m_ObjectHideFlags: 11
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d0353a89b1f911e48b9e16bdc9f2e058, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  version: 9
