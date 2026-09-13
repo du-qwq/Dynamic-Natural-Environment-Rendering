@@ -6,15 +6,24 @@ using UnityEngine.Rendering.Universal;
 public class PlanarReflectionRenderer : MonoBehaviour
 {
     [Header("引用")]
+    [InspectorName("水面 Renderer")]
     [SerializeField] private Renderer waterRenderer;
+
+    [InspectorName("目标摄像机")]
     [SerializeField] private Camera targetCamera;
 
     [Header("反射质量")]
+    [InspectorName("反射纹理高度")]
     [SerializeField, Range(256, 2048)] private int reflectionTextureHeight = 512;
+
+    [InspectorName("反射层级")]
     [SerializeField] private LayerMask reflectionMask = ~0;
+
+    [InspectorName("渲染阴影")]
     [SerializeField] private bool renderShadows = true;
 
     [Header("裁剪")]
+    [InspectorName("裁剪平面偏移")]
     [SerializeField, Range(0.001f, 0.5f)] private float clipPlaneOffset = 0.05f;
 
     private Camera reflectionCamera;
@@ -186,6 +195,7 @@ public class PlanarReflectionRenderer : MonoBehaviour
                 Debug.LogError("当前 URP Renderer 不支持 SingleCameraRequest，Planar Reflection 无法渲染。", this);
                 requestUnsupportedLogged = true;
             }
+
             return;
         }
 

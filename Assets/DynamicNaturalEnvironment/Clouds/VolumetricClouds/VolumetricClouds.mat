@@ -1,0 +1,85 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!21 &2100000
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: VolumetricClouds
+  m_Shader: {fileID: 4800000, guid: 20d414bb48a6df847a47ca0dec88ccb0, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords:
+  - _CLOUDS_MICRO_EROSION
+  - _PERCEPTUAL_BLENDING
+  m_InvalidKeywords: []
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: -1
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs:
+    - _CloudCurveTexture:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _CloudLutTexture:
+        m_Texture: {fileID: 2800000, guid: e0bcfddf26ed5584ba3d8b94d3200114, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _ErosionNoise:
+        m_Texture: {fileID: 11700000, guid: d1aae012f8a4f23478471851f17ff915, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _VolumetricCloudsAmbientProbe:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _Worley128RGBA:
+        m_Texture: {fileID: 11700000, guid: 1fe54a721d0e2504e89f121c723404a8, type: 3}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    m_Ints: []
+    m_Floats:
+    - _AccumulationFactor: 0.95
+    - _AltitudeDistortion: 0.0625
+    - _AmbientProbeDimmer: 2
+    - _CloudNearPlane: 1646.886
+    - _DensityMultiplier: 0.14580001
+    - _EarthRadius: 6378100
+    - _ErosionFactor: 0.32
+    - _ErosionOcclusion: 0.1
+    - _ErosionScale: 68
+    - _FadeInDistance: 390.00003
+    - _FadeInStart: 260
+    - _HighestCloudAltitude: 6381100
+    - _LowestCloudAltitude: 6379800
+    - _MaxStepSize: 162.5
+    - _MediumWindSpeed: 1
+    - _MicroErosionFactor: 0.5
+    - _MicroErosionScale: 200
+    - _MultiScattering: 0.525
+    - _NormalizationFactor: 0.7854
+    - _NumLightSteps: 2
+    - _NumPrimarySteps: 48
+    - _PowderEffectIntensity: 0.25
+    - _Seed: 0
+    - _ShapeFactor: 0.831
+    - _ShapeScale: 6
+    - _SmallWindSpeed: 0.25
+    - _SunLightDimmer: 1.267
+    - _VerticalErosionWindDisplacement: -49.905785
+    - _VerticalShapeNoiseOffset: 0
+    - _VerticalShapeWindDisplacement: 0
+    m_Colors:
+    - _ScatteringTint: {r: 0.73986894, g: 0.69908285, b: 0.6650944, a: 0.25}
+    - _ShapeNoiseOffset: {r: 0, g: 0, b: 0, a: 0}
+    - _WindDirection: {r: -0.81915206, g: -0.57357645, b: 0, a: 0}
+    - _WindVector: {r: -654.06757, g: -458.0036, b: 0, a: 0}
+  m_BuildTextureStacks: []
