@@ -1,0 +1,25 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6a1c2f2679d385b419afd71d6087e38c, type: 3}
+  m_Name: ForestBushes
+  m_EditorClassIdentifier: 
+  species:
+  - species: {fileID: 11400000, guid: 30e37c70e38c21a44b3138827ea36bdc, type: 2}
+    weight: 0
+  - species: {fileID: 11400000, guid: a8c3c493749c06547a0e42b64ac81e37, type: 2}
+    weight: 1
+  - species: {fileID: 11400000, guid: 94c116c891e3b9049824126cd8f24356, type: 2}
+    weight: 0
+  - species: {fileID: 11400000, guid: 32836a2e6f22c58448c8eecc7dfa95bf, type: 2}
+    weight: 0
+  - species: {fileID: 11400000, guid: cceda9fae97c05a42a20c605114dfd20, type: 2}
+    weight: 0

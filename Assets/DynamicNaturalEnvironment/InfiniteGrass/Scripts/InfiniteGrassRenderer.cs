@@ -1,77 +1,86 @@
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
 using UnityEngine;
-using static Unity.Burst.Intrinsics.X86.Avx;
-
-public enum GrassDebugMode
-{
-    None = 0,
-    LOD = 1,
-    Mask = 2,
-    Slope = 3,
-    Wind = 4,
-    Burn = 5,
-    Height = 6,
-    Color = 7
-}
+using UnityEngine.Rendering;
 
 [ExecuteAlways]
 public class InfiniteGrassRenderer : MonoBehaviour
 {
-    public Texture2D densityTexture;
     [HideInInspector] public static InfiniteGrassRenderer instance;
 
-    [Header("Internal")]
-    public Material grassMaterial;
-    public ComputeBuffer nearArgsBuffer;//LOD新增：近处草间接绘制参数Buffer
-    public ComputeBuffer farArgsBuffer;//LOD新增：远处草间接绘制参数Buffer
-    public ComputeBuffer tBuffer;
-    public ComputeBuffer farTBuffer;//LOD新增：远处草Debug计数Buffer
+    [Header("Base Grass Layer")]
+    [Tooltip("Base 近距离草丛 Mesh")] public Mesh nearGrassMesh;
+    [Tooltip("Base 远距离 Mesh，留空则使用近距离 Mesh")] public Mesh farGrassMesh;
+    [Tooltip("Base 草材质")] public Material grassMaterial;
+    [Min(0.05f)] public float spacing = 0.20f;
+    [Range(0f, 1f)] public float baseDensityMultiplier = 1f;
+    [Min(0.001f)] public float patchScale = 0.025f;
+    [Range(0f, 0.95f)] public float patchStrength = 0.30f;
+    [Range(0.05f, 1f)] public float farDensityMultiplier = 0.55f;
 
-    [Header("Grass Properties")]
-    public float spacing = 0.5f;//每根草的间距决定每个草的疏密程度
-    public float drawDistance = 300;//草的最大绘制距离
-    public float fullDensityDistance = 50;//满密度距离，ComputeShader里会用它做远处密度衰减
-    public int grassMeshSubdivision = 5;//草叶分段数，保留旧参数，LOD开启后由下面两个细分参数控制
-    public float textureUpdateThreshold = 10.0f;
+    [Header("Accent Grass Layer")]
+    [Tooltip("Accent 近距离草丛 Mesh")] public Mesh accentNearGrassMesh;
+    [Tooltip("Accent 远距离 Mesh，留空则使用近距离 Mesh")] public Mesh accentFarGrassMesh;
+    [Tooltip("Accent 草材质")] public Material accentGrassMaterial;
+    [Min(0.05f)] public float accentSpacing = 0.36f;
+    [Range(0f, 1f)] public float accentDensityMultiplier = 0.45f;
+    [Min(0.001f)] public float accentPatchScale = 0.022f;
+    [Range(0f, 0.95f)] public float accentPatchStrength = 0.55f;
+    [Range(0.05f, 1f)] public float accentFarDensityMultiplier = 0.30f;
 
-    [Header("Grass LOD")]
-    public float lodDistance = 80f;//LOD新增：小于这个距离使用近处高细分草，大于这个距离使用远处低细分草
-    public int nearGrassMeshSubdivision = 5;//LOD新增：近处草叶分段数
-    public int farGrassMeshSubdivision = 1;//LOD新增：远处草叶分段数
+    [Header("Distance")]
+    [Min(1f)] public float drawDistance = 120f;
+    [Min(0f)] public float fullDensityDistance = 45f;
+    [Min(0f)] public float lodDistance = 45f;
+    [Min(0.01f)] public float textureUpdateThreshold = 10f;
+
+    [Header("Edge Distribution")]
+    [Min(0.001f)] public float edgeNoiseScale = 0.02f;
+    [Min(0f)] public float edgeNoiseStrength = 12f;
+
+    [Header("Terrain Filtering")]
+    public Terrain targetTerrain;
+    [Min(0)] public int grassTerrainLayerIndex = 0;
+    [Range(0f, 1f)] public float terrainLayerThreshold = 0.30f;
+    public bool useSlopeFilter = true;
+    [Range(0f, 90f)] public float maxSlope = 38f;
+    [Range(0.1f, 30f)] public float slopeFade = 10f;
+
+    [Header("Shadows")]
+    public bool castNearShadows = true;
+    public bool castFarShadows = false;
+    public bool receiveShadows = true;
 
     [Header("Max Buffer Count (Millions)")]
-    public float maxBufferCount = 2;//最大草数量
+    [Min(0.01f)] public float maxBufferCount = 1f;
 
-    [Header("Debug (Enabling this will make the performance drop a lot)")]
-    public bool previewVisibleGrassCount = false;//是否显示当前可见草数量
+    [Header("Debug")]
+    public bool previewVisibleGrassCount;
 
-    [Header("Debug Visualization")]
-    public GrassDebugMode debugMode = GrassDebugMode.None;//调试显示模式，None为正常草地效果
+    [HideInInspector] public ComputeBuffer nearArgsBuffer;
+    [HideInInspector] public ComputeBuffer farArgsBuffer;
+    [HideInInspector] public ComputeBuffer accentNearArgsBuffer;
+    [HideInInspector] public ComputeBuffer accentFarArgsBuffer;
 
-    private readonly uint[] nearDebugCountData = new uint[1];//编辑器调试窗口读取近处草数量时复用，避免反复创建数组
-    private readonly uint[] farDebugCountData = new uint[1];//编辑器调试窗口读取远处草数量时复用，避免反复创建数组
+    [HideInInspector] public ComputeBuffer tBuffer;
+    [HideInInspector] public ComputeBuffer farTBuffer;
+    [HideInInspector] public ComputeBuffer accentTBuffer;
+    [HideInInspector] public ComputeBuffer accentFarTBuffer;
 
-    private Mesh cachedGrassMesh;
-    private Mesh cachedNearGrassMesh;//LOD新增：缓存近处草Mesh
-    private Mesh cachedFarGrassMesh;//LOD新增：缓存远处草Mesh
+    private Material nearGrassMaterial;
+    private Material farGrassMaterial;
+    private Material accentNearGrassMaterial;
+    private Material accentFarGrassMaterial;
 
-    private Material nearGrassMaterial;//LOD新增：近处草材质实例
-    private Material farGrassMaterial;//LOD新增：远处草材质实例
-    private Material cachedSourceGrassMaterial;//LOD新增：记录材质源，材质改变时重建实例
+    private Material cachedBaseSourceMaterial;
+    private Material cachedAccentSourceMaterial;
 
-    //记录当前argsBuffer对应的Mesh index数量，只有草Mesh变化时才重建argsBuffer
-    private int cachedIndexCount = -1;
+    private int cachedNearIndexCount = -1;
+    private int cachedFarIndexCount = -1;
+    private int cachedAccentNearIndexCount = -1;
+    private int cachedAccentFarIndexCount = -1;
 
-    //记录当前argsBuffer对应的最大草数量，只有maxBufferCount变化时才重建argsBuffer
-    private float cachedMaxBufferCount = -1;
-
-    private int cachedNearIndexCount = -1;//LOD新增：记录近处草Mesh index数量
-    private int cachedFarIndexCount = -1;//LOD新增：记录远处草Mesh index数量
-    private int oldNearSubdivision = -1;//LOD新增：记录近处草上一次细分数
-    private int oldFarSubdivision = -1;//LOD新增：记录远处草上一次细分数
+    public bool HasBaseLayer => nearGrassMesh && grassMaterial;
+    public bool HasAccentLayer => accentNearGrassMesh && accentGrassMaterial;
 
     private void OnEnable()
     {
@@ -80,293 +89,242 @@ public class InfiniteGrassRenderer : MonoBehaviour
 
     private void OnDisable()
     {
-        instance = null;
+        if (instance == this) instance = null;
 
-        nearArgsBuffer?.Release();
-        farArgsBuffer?.Release();
-        tBuffer?.Release();
-        farTBuffer?.Release();
+        ReleaseBuffer(ref nearArgsBuffer);
+        ReleaseBuffer(ref farArgsBuffer);
+        ReleaseBuffer(ref accentNearArgsBuffer);
+        ReleaseBuffer(ref accentFarArgsBuffer);
 
-        //Release 后置空，避免后面误用已经释放的Buffer
-        nearArgsBuffer = null;
-        farArgsBuffer = null;
-        tBuffer = null;
-        farTBuffer = null;
+        ReleaseBuffer(ref tBuffer);
+        ReleaseBuffer(ref farTBuffer);
+        ReleaseBuffer(ref accentTBuffer);
+        ReleaseBuffer(ref accentFarTBuffer);
 
-        ReleaseLODMaterials();//LOD新增：释放运行时创建的两个材质实例
+        ReleaseRuntimeMaterials();
 
-        //重置缓存标记，下次启用时重新创建Buffer
-        cachedIndexCount = -1;
-        cachedMaxBufferCount = -1;
         cachedNearIndexCount = -1;
         cachedFarIndexCount = -1;
+        cachedAccentNearIndexCount = -1;
+        cachedAccentFarIndexCount = -1;
     }
 
-    void LateUpdate()
+    private void LateUpdate()
     {
-        if (spacing <= 0 || grassMaterial == null || Camera.main == null) return;
+        if (!Camera.main) return;
 
-        Bounds cameraBounds = CalculateCameraBounds(Camera.main);
+        Bounds bounds = CalculateCameraBounds(Camera.main);
         Vector2 centerPos = new Vector2(Mathf.Floor(Camera.main.transform.position.x / textureUpdateThreshold) * textureUpdateThreshold, Mathf.Floor(Camera.main.transform.position.z / textureUpdateThreshold) * textureUpdateThreshold);
 
-        EnsureLODMaterials();//LOD新增：确保近处和远处材质实例存在
+        if (HasBaseLayer) DrawBaseLayer(bounds, centerPos);
+        if (HasAccentLayer) DrawAccentLayer(bounds, centerPos);
 
-        nearGrassMaterial.CopyPropertiesFromMaterial(grassMaterial);//同步Grass Width、Grass Height、风和颜色等材质参数到近处LOD材质
-        farGrassMaterial.CopyPropertiesFromMaterial(grassMaterial);//同步Grass Width、Grass Height、风和颜色等材质参数到远处LOD材质
-
-        //不要每帧Release/New，只在需要时创建或重建argsBuffer
-        EnsureArgsBuffer();
-
-        //tBuffer只用于Debug计数，也不需要每帧重建
-        EnsureTBuffer();
-
-        if (nearArgsBuffer == null || farArgsBuffer == null || nearGrassMaterial == null || farGrassMaterial == null) return;
-
-        SetupGrassMaterial(nearGrassMaterial, centerPos, 0);//LOD新增：近处材质读取Near位置Buffer
-        SetupGrassMaterial(farGrassMaterial, centerPos, 1);//LOD新增：远处材质读取Far位置Buffer
-
-        Graphics.DrawMeshInstancedIndirect(GetGrassMeshCache(nearGrassMeshSubdivision, ref cachedNearGrassMesh, ref oldNearSubdivision), 0, nearGrassMaterial, cameraBounds, nearArgsBuffer);
-        Graphics.DrawMeshInstancedIndirect(GetGrassMeshCache(farGrassMeshSubdivision, ref cachedFarGrassMesh, ref oldFarSubdivision), 0, farGrassMaterial, cameraBounds, farArgsBuffer);
+        if (previewVisibleGrassCount) EnsureDebugBuffers();
     }
 
-    //LOD新增：设置近处和远处材质共用的参数
-    private void SetupGrassMaterial(Material targetMaterial, Vector2 centerPos, int lodLevel)
+    private void DrawBaseLayer(Bounds bounds, Vector2 centerPos)
     {
-        targetMaterial.SetTexture("_DensityTexture", densityTexture);
-        targetMaterial.SetTextureScale("_DensityTexture", new Vector2(1, 1));
-        targetMaterial.SetVector("_CenterPos", centerPos);
-        targetMaterial.SetFloat("_DrawDistance", drawDistance);//传数据RT的额外缓冲距离
-        targetMaterial.SetFloat("_TextureUpdateThreshold", textureUpdateThreshold);
-        targetMaterial.SetInt("_GrassLODLevel", lodLevel);//LOD新增：0读取Near Buffer，1读取Far Buffer
-        targetMaterial.SetInt("_GrassDebugMode", (int)debugMode);//调试新增：把调试显示模式传给近处和远处草材质
+        Mesh nearMesh = nearGrassMesh;
+        Mesh farMesh = farGrassMesh ? farGrassMesh : nearGrassMesh;
+
+        EnsureLayerMaterials(grassMaterial, ref nearGrassMaterial, ref farGrassMaterial, ref cachedBaseSourceMaterial, "Base");
+        EnsureArgsBuffer(ref nearArgsBuffer, nearMesh, ref cachedNearIndexCount);
+        EnsureArgsBuffer(ref farArgsBuffer, farMesh, ref cachedFarIndexCount);
+
+        SetupGrassMaterial(nearGrassMaterial, grassMaterial, centerPos, 0, 0);
+        SetupGrassMaterial(farGrassMaterial, grassMaterial, centerPos, 1, 0);
+
+        if (nearArgsBuffer != null) Graphics.DrawMeshInstancedIndirect(nearMesh, 0, nearGrassMaterial, bounds, nearArgsBuffer, 0, null, castNearShadows ? ShadowCastingMode.On : ShadowCastingMode.Off, receiveShadows);
+        if (farArgsBuffer != null) Graphics.DrawMeshInstancedIndirect(farMesh, 0, farGrassMaterial, bounds, farArgsBuffer, 0, null, castFarShadows ? ShadowCastingMode.On : ShadowCastingMode.Off, receiveShadows);
     }
 
-    //LOD新增：为两次Draw分别创建材质实例，避免同一个材质的LOD参数互相覆盖
-    private void EnsureLODMaterials()
+    private void DrawAccentLayer(Bounds bounds, Vector2 centerPos)
     {
-        if (nearGrassMaterial != null && farGrassMaterial != null && cachedSourceGrassMaterial == grassMaterial) return;
+        Mesh nearMesh = accentNearGrassMesh;
+        Mesh farMesh = accentFarGrassMesh ? accentFarGrassMesh : accentNearGrassMesh;
 
-        ReleaseLODMaterials();
+        EnsureLayerMaterials(accentGrassMaterial, ref accentNearGrassMaterial, ref accentFarGrassMaterial, ref cachedAccentSourceMaterial, "Accent");
+        EnsureArgsBuffer(ref accentNearArgsBuffer, nearMesh, ref cachedAccentNearIndexCount);
+        EnsureArgsBuffer(ref accentFarArgsBuffer, farMesh, ref cachedAccentFarIndexCount);
 
-        nearGrassMaterial = new Material(grassMaterial);
-        farGrassMaterial = new Material(grassMaterial);
-        nearGrassMaterial.name = grassMaterial.name + "_NearLOD";
-        farGrassMaterial.name = grassMaterial.name + "_FarLOD";
-        cachedSourceGrassMaterial = grassMaterial;
+        SetupGrassMaterial(accentNearGrassMaterial, accentGrassMaterial, centerPos, 0, 1);
+        SetupGrassMaterial(accentFarGrassMaterial, accentGrassMaterial, centerPos, 1, 1);
+
+        if (accentNearArgsBuffer != null) Graphics.DrawMeshInstancedIndirect(nearMesh, 0, accentNearGrassMaterial, bounds, accentNearArgsBuffer, 0, null, castNearShadows ? ShadowCastingMode.On : ShadowCastingMode.Off, receiveShadows);
+        if (accentFarArgsBuffer != null) Graphics.DrawMeshInstancedIndirect(farMesh, 0, accentFarGrassMaterial, bounds, accentFarArgsBuffer, 0, null, castFarShadows ? ShadowCastingMode.On : ShadowCastingMode.Off, receiveShadows);
     }
 
-    //LOD新增：释放运行时材质实例
-    private void ReleaseLODMaterials()
+    private void SetupGrassMaterial(Material runtimeMaterial, Material sourceMaterial, Vector2 centerPos, int lodLevel, int layer)
     {
-        if (Application.isPlaying)
-        {
-            if (nearGrassMaterial != null) Destroy(nearGrassMaterial);
-            if (farGrassMaterial != null) Destroy(farGrassMaterial);
-        }
-        else
-        {
-            if (nearGrassMaterial != null) DestroyImmediate(nearGrassMaterial);
-            if (farGrassMaterial != null) DestroyImmediate(farGrassMaterial);
-        }
+        if (!runtimeMaterial || !sourceMaterial) return;
 
-        nearGrassMaterial = null;
-        farGrassMaterial = null;
-        cachedSourceGrassMaterial = null;
+        runtimeMaterial.CopyPropertiesFromMaterial(sourceMaterial);
+        runtimeMaterial.enableInstancing = true;
+
+        runtimeMaterial.SetVector("_CenterPos", centerPos);
+        runtimeMaterial.SetFloat("_DrawDistance", drawDistance);
+        runtimeMaterial.SetFloat("_TextureUpdateThreshold", textureUpdateThreshold);
+        runtimeMaterial.SetInt("_GrassLODLevel", lodLevel);
+        runtimeMaterial.SetInt("_GrassLayer", layer);
+
+        SetupTerrainLayerData(runtimeMaterial);
     }
 
-    //确保argsBuffer存在，并且只在草Mesh或maxBufferCount变化时重建
-    private void EnsureArgsBuffer()
+    private void SetupTerrainLayerData(Material material)
     {
-        Mesh nearGrassMesh = GetGrassMeshCache(nearGrassMeshSubdivision, ref cachedNearGrassMesh, ref oldNearSubdivision);
-        Mesh farGrassMesh = GetGrassMeshCache(farGrassMeshSubdivision, ref cachedFarGrassMesh, ref oldFarSubdivision);
+        material.SetFloat("_UseTerrainBaseTex", 0f);
 
-        int nearIndexCount = (int)nearGrassMesh.GetIndexCount(0);
-        int farIndexCount = (int)farGrassMesh.GetIndexCount(0);
+        if (!targetTerrain || !targetTerrain.terrainData) return;
 
-        if (nearArgsBuffer != null && farArgsBuffer != null && cachedNearIndexCount == nearIndexCount && cachedFarIndexCount == farIndexCount && Mathf.Approximately(cachedMaxBufferCount, maxBufferCount)) return;
+        TerrainLayer[] layers = targetTerrain.terrainData.terrainLayers;
+        if (grassTerrainLayerIndex < 0 || grassTerrainLayerIndex >= layers.Length) return;
 
-        nearArgsBuffer?.Release();
-        farArgsBuffer?.Release();
+        TerrainLayer layer = layers[grassTerrainLayerIndex];
+        if (!layer || !layer.diffuseTexture) return;
 
-        nearArgsBuffer = CreateArgsBuffer(nearGrassMesh);//LOD新增：近处草绘制参数
-        farArgsBuffer = CreateArgsBuffer(farGrassMesh);//LOD新增：远处草绘制参数
+        Vector2 tileSize = layer.tileSize;
+        if (Mathf.Abs(tileSize.x) < 0.0001f || Mathf.Abs(tileSize.y) < 0.0001f) return;
 
-        cachedNearIndexCount = nearIndexCount;
-        cachedFarIndexCount = farIndexCount;
-        cachedMaxBufferCount = maxBufferCount;
+        Vector2 tileOffset = layer.tileOffset;
+        Vector3 terrainPos = targetTerrain.transform.position;
+
+        material.SetTexture("_TerrainBaseTex", layer.diffuseTexture);
+        material.SetVector("_TerrainPosition", new Vector4(terrainPos.x, terrainPos.y, terrainPos.z, 1f));
+        material.SetVector("_TerrainLayerST", new Vector4(1f / tileSize.x, 1f / tileSize.y, tileOffset.x / tileSize.x, tileOffset.y / tileSize.y));
+        material.SetFloat("_UseTerrainBaseTex", 1f);
     }
 
-    //LOD新增：根据指定Mesh创建对应的间接绘制参数Buffer
-    private ComputeBuffer CreateArgsBuffer(Mesh grassMesh)
+    private void EnsureLayerMaterials(Material source, ref Material nearMaterial, ref Material farMaterial, ref Material cachedSource, string suffix)
     {
-        ComputeBuffer buffer = new ComputeBuffer(1, 5 * sizeof(uint), ComputeBufferType.IndirectArguments);//ComputeBufferType.IndirectArguments用于GPU间接调用，将调用参数存于GPU缓冲区，实现完全由GPU驱动的绘制/计算
+        if (nearMaterial && farMaterial && cachedSource == source) return;
 
-        uint[] args = new uint[5];
-        args[0] = (uint)grassMesh.GetIndexCount(0);//每个实例要绘制多少个index
-        args[1] = 0;//实例数量由RendererFeature从AppendBuffer计数器复制进来
-        args[2] = (uint)grassMesh.GetIndexStart(0);//index起始位置
-        args[3] = (uint)grassMesh.GetBaseVertex(0);//顶点编号整体偏移量
-        args[4] = 0;//从第几个实例开始画
+        ReleaseMaterial(ref nearMaterial);
+        ReleaseMaterial(ref farMaterial);
+
+        nearMaterial = new Material(source);
+        farMaterial = new Material(source);
+
+        nearMaterial.name = source.name + "_" + suffix + "_NearLOD";
+        farMaterial.name = source.name + "_" + suffix + "_FarLOD";
+
+        nearMaterial.enableInstancing = true;
+        farMaterial.enableInstancing = true;
+
+        cachedSource = source;
+    }
+
+    private void EnsureArgsBuffer(ref ComputeBuffer buffer, Mesh mesh, ref int cachedIndexCount)
+    {
+        if (!mesh) return;
+
+        int indexCount = (int)mesh.GetIndexCount(0);
+        if (buffer != null && cachedIndexCount == indexCount) return;
+
+        ReleaseBuffer(ref buffer);
+
+        buffer = new ComputeBuffer(1, sizeof(uint) * 5, ComputeBufferType.IndirectArguments);
+        uint[] args = { mesh.GetIndexCount(0), 0, mesh.GetIndexStart(0), mesh.GetBaseVertex(0), 0 };
         buffer.SetData(args);
 
-        return buffer;
+        cachedIndexCount = indexCount;
     }
 
-    //确保tBuffer存在，它只是Debug显示草数量用，不需要每帧重建
-    private void EnsureTBuffer()
+    private void EnsureDebugBuffers()
     {
-        if (tBuffer == null) tBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.Raw);//ComputeBufferType.Raw表示原始字节Buffer，这里只是拿来装一个计数值
-        if (farTBuffer == null) farTBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.Raw);//LOD新增：装远处草计数值
+        if (tBuffer == null) tBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.Raw);
+        if (farTBuffer == null) farTBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.Raw);
+        if (accentTBuffer == null) accentTBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.Raw);
+        if (accentFarTBuffer == null) accentFarTBuffer = new ComputeBuffer(1, sizeof(uint), ComputeBufferType.Raw);
     }
 
-    //调试新增：供编辑器窗口读取Near/Far可见草数量，调用时会产生一次GPU到CPU同步
-    public bool TryGetVisibleGrassCounts(out uint nearCount, out uint farCount)
+    private void ReleaseRuntimeMaterials()
     {
-        nearCount = 0;
-        farCount = 0;
+        ReleaseMaterial(ref nearGrassMaterial);
+        ReleaseMaterial(ref farGrassMaterial);
+        ReleaseMaterial(ref accentNearGrassMaterial);
+        ReleaseMaterial(ref accentFarGrassMaterial);
 
-        if (tBuffer == null || farTBuffer == null) return false;
+        cachedBaseSourceMaterial = null;
+        cachedAccentSourceMaterial = null;
+    }
 
-        tBuffer.GetData(nearDebugCountData);
-        farTBuffer.GetData(farDebugCountData);
+    private void ReleaseMaterial(ref Material material)
+    {
+        if (!material) return;
+        if (Application.isPlaying) Destroy(material);
+        else DestroyImmediate(material);
+        material = null;
+    }
 
-        nearCount = nearDebugCountData[0];
-        farCount = farDebugCountData[0];
-
-        return true;
+    private void ReleaseBuffer(ref ComputeBuffer buffer)
+    {
+        buffer?.Release();
+        buffer = null;
     }
 
     private void OnGUI()
     {
-        if (previewVisibleGrassCount)
-        {
-            if (Camera.main == null || tBuffer == null || farTBuffer == null) return;//防止编辑器状态下空引用
+        if (!previewVisibleGrassCount || tBuffer == null || farTBuffer == null || accentTBuffer == null || accentFarTBuffer == null) return;
 
-            GUI.contentColor = Color.black;
-            GUIStyle style = new GUIStyle();
-            style.fontSize = 25;
+        uint[] bNear = new uint[1];
+        uint[] bFar = new uint[1];
+        uint[] aNear = new uint[1];
+        uint[] aFar = new uint[1];
 
-            uint[] nearCount = new uint[1];
-            uint[] farCount = new uint[1];
-            tBuffer.GetData(nearCount);
-            farTBuffer.GetData(farCount);
+        tBuffer.GetData(bNear);
+        farTBuffer.GetData(bFar);
+        accentTBuffer.GetData(aNear);
+        accentFarTBuffer.GetData(aFar);
 
-            Bounds cameraBounds = CalculateCameraBounds(Camera.main);
-            Vector2Int gridSize = new Vector2Int(Mathf.CeilToInt(cameraBounds.size.x / spacing), Mathf.CeilToInt(cameraBounds.size.z / spacing));
+        GUIStyle style = new GUIStyle { fontSize = 21 };
+        style.normal.textColor = Color.black;
 
-            GUI.Label(new Rect(50, 50, 500, 200), "Dispatch Size : " + gridSize.x + "x" + gridSize.y + " = " + (gridSize.x * gridSize.y), style);
-            GUI.Label(new Rect(50, 80, 500, 200), "Near Grass Count : " + nearCount[0], style);
-            GUI.Label(new Rect(50, 110, 500, 200), "Far Grass Count : " + farCount[0], style);
-            GUI.Label(new Rect(50, 140, 500, 200), "Visible Grass Count : " + (nearCount[0] + farCount[0]), style);
-        }
+        GUI.Label(new Rect(30, 30, 500, 30), $"Base Near : {bNear[0]}", style);
+        GUI.Label(new Rect(30, 55, 500, 30), $"Base Far : {bFar[0]}", style);
+        GUI.Label(new Rect(30, 80, 500, 30), $"Accent Near : {aNear[0]}", style);
+        GUI.Label(new Rect(30, 105, 500, 30), $"Accent Far : {aFar[0]}", style);
+        GUI.Label(new Rect(30, 130, 500, 30), $"Total : {bNear[0] + bFar[0] + aNear[0] + aFar[0]}", style);
     }
 
-    int oldSubdivision = -1;
-    public Mesh GetGrassMeshCache()
+    private Bounds CalculateCameraBounds(Camera camera)
     {
-        return GetGrassMeshCache(grassMeshSubdivision, ref cachedGrassMesh, ref oldSubdivision);
-    }
+        Vector3 ntl = camera.ViewportToWorldPoint(new Vector3(0, 1, camera.nearClipPlane));
+        Vector3 ntr = camera.ViewportToWorldPoint(new Vector3(1, 1, camera.nearClipPlane));
+        Vector3 nbl = camera.ViewportToWorldPoint(new Vector3(0, 0, camera.nearClipPlane));
+        Vector3 nbr = camera.ViewportToWorldPoint(new Vector3(1, 0, camera.nearClipPlane));
+        Vector3 ftl = camera.ViewportToWorldPoint(new Vector3(0, 1, drawDistance));
+        Vector3 ftr = camera.ViewportToWorldPoint(new Vector3(1, 1, drawDistance));
+        Vector3 fbl = camera.ViewportToWorldPoint(new Vector3(0, 0, drawDistance));
+        Vector3 fbr = camera.ViewportToWorldPoint(new Vector3(1, 0, drawDistance));
 
-    //LOD新增：同一个建模逻辑根据不同细分数分别生成Near和Far草Mesh
-    private Mesh GetGrassMeshCache(int subdivision, ref Mesh cachedMesh, ref int oldSubdivisionValue)
-    {
-        subdivision = Mathf.Max(0, subdivision);
+        float[] xs = { ntl.x, ntr.x, nbl.x, nbr.x, ftl.x, ftr.x, fbl.x, fbr.x };
+        float[] ys = { ntl.y, ntr.y, nbl.y, nbr.y, ftl.y, ftr.y, fbl.y, fbr.y };
+        float[] zs = { ntl.z, ntr.z, nbl.z, nbr.z, ftl.z, ftr.z, fbl.z, fbr.z };
 
-        if (!cachedMesh || oldSubdivisionValue != subdivision)
-        {
-            cachedMesh = new Mesh();
+        Vector3 min = new Vector3(xs.Min(), ys.Min(), zs.Min());
+        Vector3 max = new Vector3(xs.Max(), ys.Max(), zs.Max());
 
-            Vector3[] vertices = new Vector3[3 + 4 * subdivision];//顶点数组
-            int[] triangles = new int[(1 + 2 * subdivision) * 3];//三角形索引数组
-            //每循环一次，生成草叶的一段矩形
-            for (int i = 0; i < subdivision; i++)
-            {
-                //算这一段的底部高度和顶部高度
-                float y1 = (float)i / (subdivision + 1);
-                float y2 = (float)(i + 1) / (subdivision + 1);
-                //创建一段矩形的四个点
-                Vector3 bottomLeft = new Vector3(-0.25f, y1);
-                Vector3 bottomRight = new Vector3(0.25f, y1);
-                Vector3 topLeft = new Vector3(-0.25f, y2);
-                Vector3 topRight = new Vector3(0.25f, y2);
-                //算这四个顶点在数组里的位置
-                int bottomLeftIndex = i * 4;
-                int bottomRightIndex = i * 4 + 1;
-                int topLeftIndex = i * 4 + 2;
-                int topRightIndex = i * 4 + 3;
-                //把四个点写进顶点数组
-                vertices[bottomLeftIndex] = bottomLeft;
-                vertices[bottomRightIndex] = bottomRight;
-                vertices[topLeftIndex] = topLeft;
-                vertices[topRightIndex] = topRight;
-                //生成两个三角形
-                triangles[i * 6] = bottomLeftIndex;
-                triangles[i * 6 + 1] = topRightIndex;
-                triangles[i * 6 + 2] = bottomRightIndex;
-
-                triangles[i * 6 + 3] = bottomLeftIndex;
-                triangles[i * 6 + 4] = topLeftIndex;
-                triangles[i * 6 + 5] = topRightIndex;
-            }
-            //补最后尖端三角形
-            vertices[subdivision * 4] = new Vector3(-0.25f, (float)subdivision / (subdivision + 1));
-            vertices[subdivision * 4 + 1] = new Vector3(0, 1);
-            vertices[subdivision * 4 + 2] = new Vector3(0.25f, (float)subdivision / (subdivision + 1));
-            //给顶部三角形写 index
-            triangles[subdivision * 6] = subdivision * 4;
-            triangles[subdivision * 6 + 1] = subdivision * 4 + 1;
-            triangles[subdivision * 6 + 2] = subdivision * 4 + 2;
-
-            cachedMesh.SetVertices(vertices);
-            cachedMesh.SetTriangles(triangles, 0);
-
-            oldSubdivisionValue = subdivision;
-        }
-
-        return cachedMesh;
-    }
-
-    Bounds CalculateCameraBounds(Camera camera)
-    {
-        Vector3 ntopLeft = camera.ViewportToWorldPoint(new Vector3(0, 1, camera.nearClipPlane));
-        Vector3 ntopRight = camera.ViewportToWorldPoint(new Vector3(1, 1, camera.nearClipPlane));
-        Vector3 nbottomLeft = camera.ViewportToWorldPoint(new Vector3(0, 0, camera.nearClipPlane));
-        Vector3 nbottomRight = camera.ViewportToWorldPoint(new Vector3(1, 0, camera.nearClipPlane));
-
-        Vector3 ftopLeft = camera.ViewportToWorldPoint(new Vector3(0, 1, drawDistance));
-        Vector3 ftopRight = camera.ViewportToWorldPoint(new Vector3(1, 1, drawDistance));
-        Vector3 fbottomLeft = camera.ViewportToWorldPoint(new Vector3(0, 0, drawDistance));
-        Vector3 fbottomRight = camera.ViewportToWorldPoint(new Vector3(1, 0, drawDistance));
-
-        float[] xValues = new float[] { ftopLeft.x, ftopRight.x, ntopLeft.x, ntopRight.x, fbottomLeft.x, fbottomRight.x, nbottomLeft.x, nbottomRight.x };
-        float startX = xValues.Max();
-        float endX = xValues.Min();
-
-        float[] yValues = new float[] { ftopLeft.y, ftopRight.y, ntopLeft.y, ntopRight.y, fbottomLeft.y, fbottomRight.y, nbottomLeft.y, nbottomRight.y };
-        float startY = yValues.Max();
-        float endY = yValues.Min();
-
-        float[] zValues = new float[] { ftopLeft.z, ftopRight.z, ntopLeft.z, ntopRight.z, fbottomLeft.z, fbottomRight.z, nbottomLeft.z, nbottomRight.z };
-        float startZ = zValues.Max();
-        float endZ = zValues.Min();
-
-        Vector3 center = new Vector3((startX + endX) / 2, (startY + endY) / 2, (startZ + endZ) / 2);
-        Vector3 size = new Vector3(Mathf.Abs(startX - endX), Mathf.Abs(startY - endY), Mathf.Abs(startZ - endZ));
-
-        Bounds bounds = new Bounds(center, size);
-        bounds.Expand(1);
+        Bounds bounds = new Bounds((min + max) * 0.5f, max - min);
+        bounds.Expand(10f);
         return bounds;
     }
 
     private void OnValidate()
     {
-        spacing = Mathf.Max(0.01f, spacing);
+        spacing = Mathf.Max(0.05f, spacing);
+        accentSpacing = Mathf.Max(0.05f, accentSpacing);
         drawDistance = Mathf.Max(1f, drawDistance);
-        fullDensityDistance = Mathf.Max(0.01f, fullDensityDistance);
+        fullDensityDistance = Mathf.Clamp(fullDensityDistance, 0f, drawDistance);
+        lodDistance = Mathf.Clamp(lodDistance, 0f, drawDistance);
         textureUpdateThreshold = Mathf.Max(0.01f, textureUpdateThreshold);
         maxBufferCount = Mathf.Max(0.01f, maxBufferCount);
-        lodDistance = Mathf.Clamp(lodDistance, 0f, drawDistance);
-        nearGrassMeshSubdivision = Mathf.Max(0, nearGrassMeshSubdivision);
-        farGrassMeshSubdivision = Mathf.Max(0, farGrassMeshSubdivision);
+        patchScale = Mathf.Max(0.001f, patchScale);
+        accentPatchScale = Mathf.Max(0.001f, accentPatchScale);
+        edgeNoiseScale = Mathf.Max(0.001f, edgeNoiseScale);
+        edgeNoiseStrength = Mathf.Max(0f, edgeNoiseStrength);
+        grassTerrainLayerIndex = Mathf.Max(0, grassTerrainLayerIndex);
+        terrainLayerThreshold = Mathf.Clamp01(terrainLayerThreshold);
+        maxSlope = Mathf.Clamp(maxSlope, 0f, 90f);
+        slopeFade = Mathf.Max(0.1f, slopeFade);
     }
 }

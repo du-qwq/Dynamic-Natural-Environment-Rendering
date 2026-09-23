@@ -1,0 +1,35 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6a1c2f2679d385b419afd71d6087e38c, type: 3}
+  m_Name: VSG_ForestTrees
+  m_EditorClassIdentifier: 
+  species:
+  - species: {fileID: 11400000, guid: e8ec9bfa8d1f6054c8a45b8d7743a866, type: 2}
+    weight: 3
+  - species: {fileID: 11400000, guid: 30d07857447ad0444852206bedd7c4e3, type: 2}
+    weight: 3
+  - species: {fileID: 11400000, guid: 617bd87aa0b5f00418b21136c7f7272d, type: 2}
+    weight: 0
+  - species: {fileID: 11400000, guid: a5ea9b1a59666df45a0da4aeefde27d0, type: 2}
+    weight: 0
+  - species: {fileID: 11400000, guid: 6d14f801683f887448d4e81a7db2dacf, type: 2}
+    weight: 0
+  - species: {fileID: 11400000, guid: c6cf72481356b2449b8fc90deae179c5, type: 2}
+    weight: 0
+  - species: {fileID: 11400000, guid: 2a7a3b6afb323d84ca404bd1174f8419, type: 2}
+    weight: 0
+  - species: {fileID: 11400000, guid: f80b6c5e4e1e5054b8b7c55c04c5f535, type: 2}
+    weight: 2
+  - species: {fileID: 11400000, guid: d1050bd8f51113a4c9e851e19d692b45, type: 2}
+    weight: 2
+  - species: {fileID: 11400000, guid: 4091be7522afdce42b665ecd374f6114, type: 2}
+    weight: 0

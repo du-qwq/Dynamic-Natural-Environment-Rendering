@@ -1,0 +1,200 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bf09c5a5033c31042824924c3cba02f5, type: 3}
+  m_Name: Forest Biome
+  m_EditorClassIdentifier: 
+  biomeName: Forest Biome
+  biomeMask:
+    enabled: 1
+    baseScale: 0.0065
+    detailScale: 0.028
+    detailStrength: 0.22
+    warpScale: 0.0035
+    warpStrength: 24
+    seedOffset: 7301
+    invert: 0
+  layers:
+  - layerName: ForestTrees
+    enabled: 1
+    speciesGroup: {fileID: 11400000, guid: 03c3fdd5d6500c04a9ffc363fdbc3463, type: 2}
+    densityPerSquareMeter: 0.015
+    minSpacing: 4.5
+    avoidExistingVegetation: 1
+    maxInstances: 10000
+    heightRange: {x: 0, y: 150}
+    slopeRange: {x: 0, y: 32}
+    biomeMaskMode: 0
+    biomeMaskThreshold: 0.5
+    biomeMaskSoftness: 0.1
+    biomeMaskEdgeWidth: 0.08
+    biomeMaskDensityInside: 1
+    biomeMaskDensityOutside: 0.05
+    enableTerrainLayerFilter: 1
+    requireTerrainForLayerFilter: 0
+    terrainLayerRules:
+    - enabled: 1
+      terrainLayer: {fileID: 8574412962073106934, guid: 71aa0d476033ef741bbc7a8946cd3031,
+        type: 2}
+      mode: 1
+      threshold: 0.08
+      densityBlendStart: 0
+      densityBlendEnd: 0.001
+      densityMultiplierAtFullWeight: 0
+    enableParentInfluence: 0
+    parentSpeciesGroup: {fileID: 0}
+    parentMinDistance: 1.5
+    parentMaxDistance: 8
+    parentEdgeFalloff: 1.5
+    parentDensityInside: 1
+    parentDensityOutside: 0.05
+    scaleMultiplierRange: {x: 0.85, y: 1.15}
+    surfaceOffsetRange: {x: 0, y: 0}
+    distributionMode: 2
+    noiseScale: 0.0001
+    noiseThreshold: 0
+    noiseStrength: 0.00019998779
+    clusterSize: 28
+    clusterThreshold: 0.43
+    clusterEdgeSoftness: 0.18
+    seedOffset: 1009
+  - layerName: ForestBushes
+    enabled: 1
+    speciesGroup: {fileID: 11400000, guid: 7657ee4099d82674e9e1ef981a07d03a, type: 2}
+    densityPerSquareMeter: 0.08
+    minSpacing: 1.2
+    avoidExistingVegetation: 1
+    maxInstances: 10000
+    heightRange: {x: 0, y: 150}
+    slopeRange: {x: 0, y: 38}
+    biomeMaskMode: 0
+    biomeMaskThreshold: 0.5
+    biomeMaskSoftness: 0.1
+    biomeMaskEdgeWidth: 0.08
+    biomeMaskDensityInside: 1
+    biomeMaskDensityOutside: 0.05
+    enableTerrainLayerFilter: 1
+    requireTerrainForLayerFilter: 0
+    terrainLayerRules:
+    - enabled: 1
+      terrainLayer: {fileID: 8574412962073106934, guid: 71aa0d476033ef741bbc7a8946cd3031,
+        type: 2}
+      mode: 1
+      threshold: 0.18
+      densityBlendStart: 0
+      densityBlendEnd: 0.001
+      densityMultiplierAtFullWeight: 0
+    enableParentInfluence: 1
+    parentSpeciesGroup: {fileID: 11400000, guid: 03c3fdd5d6500c04a9ffc363fdbc3463,
+      type: 2}
+    parentMinDistance: 1.8
+    parentMaxDistance: 8
+    parentEdgeFalloff: 1.5
+    parentDensityInside: 1
+    parentDensityOutside: 0.05
+    scaleMultiplierRange: {x: 0.85, y: 1.15}
+    surfaceOffsetRange: {x: 0, y: 0}
+    distributionMode: 2
+    noiseScale: 0.0001
+    noiseThreshold: 0
+    noiseStrength: 0.00019998779
+    clusterSize: 12
+    clusterThreshold: 0.4
+    clusterEdgeSoftness: 0.18
+    seedOffset: 3027
+  - layerName: ForestFlowers
+    enabled: 0
+    speciesGroup: {fileID: 11400000, guid: 21f724283f3713f40bf037416a26ddc7, type: 2}
+    densityPerSquareMeter: 0.25
+    minSpacing: 0.35
+    avoidExistingVegetation: 0
+    maxInstances: 1000
+    heightRange: {x: 0, y: 150}
+    slopeRange: {x: 0, y: 25}
+    biomeMaskMode: 0
+    biomeMaskThreshold: 0.5
+    biomeMaskSoftness: 0.1
+    biomeMaskEdgeWidth: 0.08
+    biomeMaskDensityInside: 1
+    biomeMaskDensityOutside: 0.05
+    enableTerrainLayerFilter: 1
+    requireTerrainForLayerFilter: 0
+    terrainLayerRules:
+    - enabled: 1
+      terrainLayer: {fileID: 8574412962073106934, guid: 71aa0d476033ef741bbc7a8946cd3031,
+        type: 2}
+      mode: 2
+      threshold: 0
+      densityBlendStart: 0.05
+      densityBlendEnd: 0.55
+      densityMultiplierAtFullWeight: 0
+    enableParentInfluence: 1
+    parentSpeciesGroup: {fileID: 11400000, guid: 03c3fdd5d6500c04a9ffc363fdbc3463,
+      type: 2}
+    parentMinDistance: 4
+    parentMaxDistance: 13
+    parentEdgeFalloff: 2.5
+    parentDensityInside: 1
+    parentDensityOutside: 0.08
+    scaleMultiplierRange: {x: 0.85, y: 1.15}
+    surfaceOffsetRange: {x: 0, y: 0}
+    distributionMode: 2
+    noiseScale: 0.0001
+    noiseThreshold: 0
+    noiseStrength: 0.00019998779
+    clusterSize: 6
+    clusterThreshold: 0.52
+    clusterEdgeSoftness: 0.18
+    seedOffset: 4036
+  - layerName: MeadowGrass
+    enabled: 1
+    speciesGroup: {fileID: 11400000, guid: c476d659a1234c54d84fe8295ee4d918, type: 2}
+    densityPerSquareMeter: 3.2
+    minSpacing: 0.16
+    avoidExistingVegetation: 0
+    maxInstances: 500000
+    heightRange: {x: 0, y: 150}
+    slopeRange: {x: 0, y: 35}
+    biomeMaskMode: 0
+    biomeMaskThreshold: 0.5
+    biomeMaskSoftness: 0.1
+    biomeMaskEdgeWidth: 0.08
+    biomeMaskDensityInside: 1
+    biomeMaskDensityOutside: 0.05
+    enableTerrainLayerFilter: 1
+    requireTerrainForLayerFilter: 0
+    terrainLayerRules:
+    - enabled: 1
+      terrainLayer: {fileID: 8574412962073106934, guid: 71aa0d476033ef741bbc7a8946cd3031,
+        type: 2}
+      mode: 2
+      threshold: 0
+      densityBlendStart: 0.05
+      densityBlendEnd: 0.55
+      densityMultiplierAtFullWeight: 0
+    enableParentInfluence: 1
+    parentSpeciesGroup: {fileID: 11400000, guid: 03c3fdd5d6500c04a9ffc363fdbc3463,
+      type: 2}
+    parentMinDistance: 0
+    parentMaxDistance: 2.8
+    parentEdgeFalloff: 1.2
+    parentDensityInside: 0.2
+    parentDensityOutside: 1
+    scaleMultiplierRange: {x: 0.85, y: 1.15}
+    surfaceOffsetRange: {x: 0, y: 0}
+    distributionMode: 1
+    noiseScale: 0.015
+    noiseThreshold: 0.25
+    noiseStrength: 0.35
+    clusterSize: 6
+    clusterThreshold: 0.52
+    clusterEdgeSoftness: 0.18
+    seedOffset: 5045

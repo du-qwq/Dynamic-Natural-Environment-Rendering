@@ -1,0 +1,260 @@
+#pragma kernel CSCullOnly
+#pragma kernel CSCullLOD
+
+StructuredBuffer<float4> _SourceBounds;
+StructuredBuffer<uint> _PersistentIDs;
+
+AppendStructuredBuffer<uint> _VisibleLOD0;
+AppendStructuredBuffer<uint> _VisibleLOD1;
+AppendStructuredBuffer<uint> _VisibleLOD2;
+AppendStructuredBuffer<uint> _VisibleLOD3;
+
+int _StartIndex;
+int _InstanceCount;
+
+int _EnableFrustumCulling;
+int _EnableShadowInfluenceCulling;
+int _IsOrthographic;
+
+int _HasLOD1;
+int _HasLOD2;
+int _HasLOD3;
+int _UseDensityLOD;
+int _LODOffset;
+
+float3 _CameraPositionWS;
+float3 _CameraForwardWS;
+float3 _CameraRightWS;
+float3 _CameraUpWS;
+
+float _LOD0Distance;
+float _LOD1Distance;
+float _LOD2Distance;
+float _CullDistance;
+
+float _MidDensity;
+float _FarDensity;
+
+float _TanHalfFov;
+float _Aspect;
+float _NearClip;
+float _OrthographicSize;
+float3 _ShadowInfluenceMin;
+float3 _ShadowInfluenceMax;
+
+uint Hash32(uint x)
+{
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+
+float Hash01(uint x)
+{
+    return (Hash32(x) & 0x00FFFFFFu) / 16777216.0;
+}
+
+float Smooth01(float value)
+{
+    value = saturate(value);
+    return value * value * (3.0 - 2.0 * value);
+}
+
+bool IsOutsideFrustum(float3 centerWS, float radius)
+{
+    if (_EnableFrustumCulling == 0) return false;
+
+    float3 cameraToCenter = centerWS - _CameraPositionWS;
+    float viewX = dot(cameraToCenter, _CameraRightWS);
+    float viewY = dot(cameraToCenter, _CameraUpWS);
+    float viewZ = dot(cameraToCenter, _CameraForwardWS);
+
+    if (viewZ + radius < _NearClip) return true;
+
+    if (_IsOrthographic != 0)
+    {
+        float halfHeight = _OrthographicSize;
+        float halfWidth = halfHeight * _Aspect;
+
+        if (abs(viewX) > halfWidth + radius) return true;
+        if (abs(viewY) > halfHeight + radius) return true;
+
+        return false;
+    }
+
+    float depth = max(viewZ, _NearClip);
+    float halfHeightPerspective = depth * _TanHalfFov;
+    float halfWidthPerspective = halfHeightPerspective * _Aspect;
+
+    if (abs(viewX) > halfWidthPerspective + radius) return true;
+    if (abs(viewY) > halfHeightPerspective + radius) return true;
+
+    return false;
+}
+
+bool IsOutsideShadowInfluence(float3 centerWS, float radius)
+{
+    if (_EnableShadowInfluenceCulling == 0) return false;
+    float3 closest = clamp(centerWS, _ShadowInfluenceMin, _ShadowInfluenceMax);
+    float3 delta = centerWS - closest;
+    return dot(delta, delta) > radius * radius;
+}
+
+bool IsInstanceVisible(float3 centerWS, float radius, out float cameraDistance)
+{
+    float3 cameraToCenter = centerWS - _CameraPositionWS;
+    float distanceSqr = dot(cameraToCenter, cameraToCenter);
+    float maxDistance = _CullDistance + radius;
+
+    if (distanceSqr > maxDistance * maxDistance)
+    {
+        cameraDistance = 0.0;
+        return false;
+    }
+
+    if (IsOutsideShadowInfluence(centerWS, radius))
+    {
+        cameraDistance = 0.0;
+        return false;
+    }
+
+    cameraDistance = sqrt(distanceSqr);
+    if (IsOutsideFrustum(centerWS, radius)) return false;
+    return true;
+}
+
+float GetGrassDensity(float distanceToCamera)
+{
+    float lod0 = max(_LOD0Distance, 0.0);
+    float lod1 = max(_LOD1Distance, lod0 + 0.001);
+    float cull = max(_CullDistance, lod1 + 0.001);
+
+    float midDensity = saturate(_MidDensity);
+    float farDensity = saturate(_FarDensity);
+
+    if (distanceToCamera <= lod0) return 1.0;
+
+    if (distanceToCamera < lod1)
+    {
+        float t = Smooth01((distanceToCamera - lod0) / (lod1 - lod0));
+        return lerp(1.0, midDensity, t);
+    }
+
+    float farFadeStart = lerp(lod1, cull, 0.75);
+
+    if (distanceToCamera < farFadeStart)
+    {
+        float t = Smooth01((distanceToCamera - lod1) / max(farFadeStart - lod1, 0.001));
+        return lerp(midDensity, farDensity, t);
+    }
+
+    float farT = Smooth01((distanceToCamera - farFadeStart) / max(cull - farFadeStart, 0.001));
+    return lerp(farDensity, 0.0, farT);
+}
+
+bool PassGrassDensity(uint sourceIndex, float cameraDistance)
+{
+    float density = GetGrassDensity(cameraDistance);
+
+    if (density >= 0.9999) return true;
+    if (density <= 0.0001) return false;
+
+    uint persistentID = _PersistentIDs[sourceIndex];
+    uint seed = persistentID ^ (sourceIndex * 0x9E3779B9u) ^ 0xA511E9B3u;
+    float stableRandom = Hash01(seed);
+
+    return stableRandom < density;
+}
+
+[numthreads(64, 1, 1)]
+void CSCullOnly(uint3 dispatchID : SV_DispatchThreadID)
+{
+    if (dispatchID.x >= (uint)_InstanceCount) return;
+
+    uint sourceIndex = (uint)_StartIndex + dispatchID.x;
+    float4 bounds = _SourceBounds[sourceIndex];
+
+    float cameraDistance;
+
+    if (!IsInstanceVisible(bounds.xyz, bounds.w, cameraDistance)) return;
+
+    _VisibleLOD0.Append(sourceIndex);
+}
+
+void AppendMeshLOD(uint sourceIndex, int baseLOD)
+{
+    int targetLOD = min(baseLOD + max(_LODOffset, 0), 3);
+
+    if (targetLOD <= 0)
+    {
+        _VisibleLOD0.Append(sourceIndex);
+        return;
+    }
+
+    if (targetLOD == 1)
+    {
+        if (_HasLOD1 != 0) { _VisibleLOD1.Append(sourceIndex); return; }
+        if (_HasLOD2 != 0) { _VisibleLOD2.Append(sourceIndex); return; }
+        if (_HasLOD3 != 0) { _VisibleLOD3.Append(sourceIndex); return; }
+        _VisibleLOD0.Append(sourceIndex);
+        return;
+    }
+
+    if (targetLOD == 2)
+    {
+        if (_HasLOD2 != 0) { _VisibleLOD2.Append(sourceIndex); return; }
+        if (_HasLOD3 != 0) { _VisibleLOD3.Append(sourceIndex); return; }
+        if (_HasLOD1 != 0) { _VisibleLOD1.Append(sourceIndex); return; }
+        _VisibleLOD0.Append(sourceIndex);
+        return;
+    }
+
+    if (_HasLOD3 != 0) { _VisibleLOD3.Append(sourceIndex); return; }
+    if (_HasLOD2 != 0) { _VisibleLOD2.Append(sourceIndex); return; }
+    if (_HasLOD1 != 0) { _VisibleLOD1.Append(sourceIndex); return; }
+    _VisibleLOD0.Append(sourceIndex);
+}
+
+[numthreads(64, 1, 1)]
+void CSCullLOD(uint3 dispatchID : SV_DispatchThreadID)
+{
+    if (dispatchID.x >= (uint)_InstanceCount) return;
+
+    uint sourceIndex = (uint)_StartIndex + dispatchID.x;
+    float4 bounds = _SourceBounds[sourceIndex];
+
+    float cameraDistance;
+
+    if (!IsInstanceVisible(bounds.xyz, bounds.w, cameraDistance)) return;
+
+    if (_UseDensityLOD != 0)
+    {
+        if (!PassGrassDensity(sourceIndex, cameraDistance)) return;
+
+        _VisibleLOD0.Append(sourceIndex);
+        return;
+    }
+
+    if (cameraDistance <= _LOD0Distance || _HasLOD1 == 0)
+    {
+        AppendMeshLOD(sourceIndex, 0);
+        return;
+    }
+
+    if (cameraDistance <= _LOD1Distance || _HasLOD2 == 0)
+    {
+        AppendMeshLOD(sourceIndex, 1);
+        return;
+    }
+
+    if (cameraDistance <= _LOD2Distance || _HasLOD3 == 0)
+    {
+        AppendMeshLOD(sourceIndex, 2);
+        return;
+    }
+
+    AppendMeshLOD(sourceIndex, 3);
+}

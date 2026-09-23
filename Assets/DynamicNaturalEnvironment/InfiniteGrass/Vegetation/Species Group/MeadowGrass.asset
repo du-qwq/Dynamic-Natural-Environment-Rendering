@@ -1,0 +1,21 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6a1c2f2679d385b419afd71d6087e38c, type: 3}
+  m_Name: MeadowGrass
+  m_EditorClassIdentifier: 
+  species:
+  - species: {fileID: 11400000, guid: 4a45904126500ac4baabfcedf37db9c4, type: 2}
+    weight: 0
+  - species: {fileID: 11400000, guid: 78b3dda5804ce5a46a2b149b76b44444, type: 2}
+    weight: 0
+  - species: {fileID: 11400000, guid: 9f5a42b76e5ec89479f1fc2be515d650, type: 2}
+    weight: 1
