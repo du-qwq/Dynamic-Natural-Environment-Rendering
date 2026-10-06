@@ -69,6 +69,10 @@ Shader "Custom/VegetationTrunk"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
         #include "VegetationIndirectCommon.hlsl"
+        #include "VegetationLOD.hlsl"
+        #include "VegetationDepthNormals.hlsl"
+        #include "VegetationReceiveShadows.hlsl"
+        #include "VegetationAdditionalLights.hlsl"
 
         TEXTURE2D(_MainTex);
         SAMPLER(sampler_MainTex);
@@ -185,6 +189,8 @@ Shader "Custom/VegetationTrunk"
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_CASCADE
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_SCREEN
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
+            #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
+            #pragma multi_compile_fragment _ _LIGHT_COOKIES
             #pragma multi_compile_fog
 
             #pragma shader_feature_local_vertex _BASEWINDCHANNEL_R _BASEWINDCHANNEL_G _BASEWINDCHANNEL_B _BASEWINDCHANNEL_A
@@ -204,6 +210,7 @@ Shader "Custom/VegetationTrunk"
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
+                nointerpolation float lodDistance : TEXCOORD15;
                 float3 positionWS : TEXCOORD0;
                 float3 normalWS : TEXCOORD1;
                 float4 tangentWS : TEXCOORD2;
@@ -219,6 +226,7 @@ Shader "Custom/VegetationTrunk"
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
 
                 float3 pivotWS = GetVegetationPivotWS(input.instanceID);
+                output.lodDistance = GetVegetationLODDistance(pivotWS);
                 float3 positionWS = TransformVegetationPositionToWorld(input.positionOS, input.instanceID);
                 float3 normalWS = TransformVegetationNormalToWorld(input.normalOS, input.instanceID);
                 float3 tangentWS = TransformVegetationTangentToWorld(input.tangentOS.xyz, input.instanceID);
@@ -238,6 +246,7 @@ Shader "Custom/VegetationTrunk"
 
             half4 Frag(Varyings input) : SV_Target
             {
+                ApplyVegetationLODCrossFade(input.lodDistance, input.positionCS.xy);
                 half4 baseSample = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv) * _Color;
 
                 float3 normalWS = normalize(input.normalWS);
@@ -267,7 +276,7 @@ Shader "Custom/VegetationTrunk"
 
                 float3 viewDirWS = SafeNormalize(GetWorldSpaceViewDir(input.positionWS));
                 float NdotL = saturate(dot(normalWS, mainLight.direction));
-                float shadowAttenuation = max(mainLight.shadowAttenuation, _ShadowFloor);
+                float shadowAttenuation = max(VegetationMainLightShadowAttenuation(mainLight.shadowAttenuation), _ShadowFloor);
 
                 float3 ambient = SampleSH(normalWS) * occlusion;
                 float3 direct = mainLight.color * NdotL * mainLight.distanceAttenuation * shadowAttenuation;
@@ -279,6 +288,19 @@ Shader "Custom/VegetationTrunk"
                 float3 specularColor = lerp(half3(0.04,0.04,0.04), baseSample.rgb, metallic);
                 float3 color = baseSample.rgb * (ambient + direct);
                 color += mainLight.color * specularColor * specularTerm * mainLight.distanceAttenuation * shadowAttenuation;
+
+                [loop]
+                for (int lightIndex = 0; lightIndex < GetVegetationAdditionalLightsCount(); ++lightIndex)
+                {
+                    Light light = GetVegetationAdditionalLight((uint)lightIndex, input.positionWS, unity_ProbesOcclusion);
+                    float localNdotL = saturate(dot(normalWS, light.direction));
+                    float localShadow = max(light.shadowAttenuation, _ShadowFloor);
+                    float localAttenuation = light.distanceAttenuation * localShadow;
+                    float3 localHalfVector = SafeNormalize(viewDirWS + light.direction);
+                    float localSpecular = pow(saturate(dot(normalWS, localHalfVector)), specularPower) * smoothness;
+                    color += light.color * localAttenuation
+                        * (baseSample.rgb * localNdotL + specularColor * localSpecular);
+                }
 
                 #if defined(_WINDDEBUGVIEW_ON)
                     float windMask = GetTrunkWindMask(input.color);
@@ -329,6 +351,7 @@ Shader "Custom/VegetationTrunk"
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
+                nointerpolation float lodDistance : TEXCOORD15;
             };
 
             Varyings ShadowVert(Attributes input)
@@ -336,6 +359,7 @@ Shader "Custom/VegetationTrunk"
                 Varyings output;
 
                 float3 pivotWS = GetVegetationPivotWS(input.instanceID);
+                output.lodDistance = GetVegetationLODDistance(pivotWS);
                 float3 positionWS = TransformVegetationPositionToWorld(input.positionOS, input.instanceID);
                 float3 normalWS = TransformVegetationNormalToWorld(input.normalOS, input.instanceID);
 
@@ -363,6 +387,7 @@ Shader "Custom/VegetationTrunk"
 
             half4 ShadowFrag(Varyings input) : SV_Target
             {
+                ApplyVegetationLODCrossFade(input.lodDistance, input.positionCS.xy);
                 return 0;
             }
 
@@ -396,6 +421,7 @@ Shader "Custom/VegetationTrunk"
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
+                nointerpolation float lodDistance : TEXCOORD15;
             };
 
             Varyings DepthVert(Attributes input)
@@ -403,6 +429,7 @@ Shader "Custom/VegetationTrunk"
                 Varyings output;
 
                 float3 pivotWS = GetVegetationPivotWS(input.instanceID);
+                output.lodDistance = GetVegetationLODDistance(pivotWS);
                 float3 positionWS = TransformVegetationPositionToWorld(input.positionOS, input.instanceID);
 
                 positionWS = ApplyTrunkWind(positionWS, pivotWS, input.color);
@@ -413,9 +440,68 @@ Shader "Custom/VegetationTrunk"
 
             half4 DepthFrag(Varyings input) : SV_Target
             {
+                ApplyVegetationLODCrossFade(input.lodDistance, input.positionCS.xy);
                 return 0;
             }
 
+            ENDHLSL
+        }
+        Pass
+        {
+            Name "DepthNormalsOnly"
+            Tags { "LightMode"="DepthNormalsOnly" }
+            Cull Back
+            ZWrite On
+            HLSLPROGRAM
+            #pragma target 4.5
+            #pragma vertex DepthNormalsVert
+            #pragma fragment DepthNormalsFrag
+            #pragma multi_compile_fragment _ _GBUFFER_NORMALS_OCT
+            #pragma shader_feature_local_vertex _BASEWINDCHANNEL_R _BASEWINDCHANNEL_G _BASEWINDCHANNEL_B _BASEWINDCHANNEL_A
+
+            struct DNAttributes
+            {
+                float3 positionOS : POSITION;
+                float3 normalOS : NORMAL;
+                float4 tangentOS : TANGENT;
+                float2 uv : TEXCOORD0;
+                float4 color : COLOR;
+                uint instanceID : SV_InstanceID;
+            };
+            struct DNVaryings
+            {
+                float4 positionCS : SV_POSITION;
+                nointerpolation float lodDistance : TEXCOORD15;
+                float3 normalWS : TEXCOORD0;
+                float4 tangentWS : TEXCOORD1;
+                float2 uv : TEXCOORD2;
+            };
+            DNVaryings DepthNormalsVert(DNAttributes input)
+            {
+                DNVaryings output;
+                float3 pivotWS = GetVegetationPivotWS(input.instanceID);
+                output.lodDistance = GetVegetationLODDistance(pivotWS);
+                float3 positionWS = TransformVegetationPositionToWorld(input.positionOS,input.instanceID);
+                positionWS = ApplyTrunkForwardWind(positionWS,pivotWS,input.color);
+                output.positionCS = TransformWorldToHClip(positionWS);
+                output.normalWS = TransformVegetationNormalToWorld(input.normalOS,input.instanceID);
+                float3 tangentWS = TransformVegetationTangentToWorld(input.tangentOS.xyz,input.instanceID);
+                output.tangentWS = float4(tangentWS,input.tangentOS.w*GetVegetationTransformSign(input.instanceID));
+                output.uv = TRANSFORM_TEX(input.uv,_MainTex);
+                return output;
+            }
+            half4 DepthNormalsFrag(DNVaryings input) : SV_Target
+            {
+                ApplyVegetationLODCrossFade(input.lodDistance,input.positionCS.xy);
+                float3 normalWS = normalize(input.normalWS);
+                float3 tangentWS = normalize(input.tangentWS.xyz);
+                float3 bitangentWS = normalize(cross(normalWS,tangentWS)*input.tangentWS.w);
+                float2 normalUV = input.uv * _BumpMap_ST.xy + _BumpMap_ST.zw;
+                half3 normalTS = UnpackNormalScale(SAMPLE_TEXTURE2D(_BumpMap,sampler_BumpMap,normalUV),
+                    max(_NormalPower,0.001));
+                normalWS = normalize(mul(normalTS,float3x3(tangentWS,bitangentWS,normalWS)));
+                return EncodeVegetationDepthNormal(normalWS);
+            }
             ENDHLSL
         }
     }

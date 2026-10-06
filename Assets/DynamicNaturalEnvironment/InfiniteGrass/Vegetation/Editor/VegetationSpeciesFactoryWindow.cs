@@ -374,7 +374,7 @@ public class VegetationSpeciesFactoryWindow : EditorWindow
 
         ValidateLODContinuity(result);
         ValidateMaterialMappings(result);
-        result.existingSpecies = FindExistingSpecies(speciesFolder, BuildSpeciesMarker(result.assetGuid));
+        result.existingSpecies = FindExistingSpecies(speciesFolder, BuildSpeciesMarker(result.assetGuid), result.lods, shaderAdapterProfile);
 
         HashSet<Material> uniqueMaterials = new HashSet<Material>();
         for (int lodIndex = 0; lodIndex < result.lods.Length; lodIndex++)
@@ -582,7 +582,7 @@ public class VegetationSpeciesFactoryWindow : EditorWindow
         }
 
         int createdCount = 0;
-        int updatedCount = 0;
+        int reusedCount = 0;
         int skippedCount = 0;
         List<string> failures = new List<string>();
         VegetationSpecies lastProducedSpecies = null;
@@ -606,7 +606,7 @@ public class VegetationSpeciesFactoryWindow : EditorWindow
                     continue;
                 }
 
-                if (created) createdCount++; else updatedCount++;
+                if (created) createdCount++; else reusedCount++;
                 lastProducedSpecies = species;
 
                 if (database != null) database.GetOrAddSpecies(species);
@@ -621,7 +621,7 @@ public class VegetationSpeciesFactoryWindow : EditorWindow
 
         if (lastProducedSpecies != null) Selection.activeObject = lastProducedSpecies;
 
-        string message = $"生产完成\n新建 Species: {createdCount}\n更新 Species: {updatedCount}\n跳过无效 Prefab: {skippedCount}\n失败: {failures.Count}";
+        string message = $"生产完成\n新建 Species: {createdCount}\n复用 Species: {reusedCount}\n跳过无效 Prefab: {skippedCount}\n失败: {failures.Count}";
         if (failures.Count > 0)
         {
             message += "\n\n" + string.Join("\n", failures);
@@ -629,7 +629,7 @@ public class VegetationSpeciesFactoryWindow : EditorWindow
         }
         else
         {
-            Debug.Log($"Species Factory完成：新建 {createdCount}，更新 {updatedCount}，跳过 {skippedCount}。");
+            Debug.Log($"Species Factory完成：新建 {createdCount}，复用 {reusedCount}，跳过 {skippedCount}。");
         }
 
         EditorUtility.DisplayDialog("Species Factory", message, "OK");
@@ -642,6 +642,10 @@ public class VegetationSpeciesFactoryWindow : EditorWindow
         created = false;
         error = null;
 
+        string marker = BuildSpeciesMarker(result.assetGuid);
+        species = FindExistingSpecies(speciesFolder, marker, result.lods, shaderAdapterProfile);
+        if (species != null) return true;
+
         SourceLOD[] adaptedLODs = { new SourceLOD(), new SourceLOD(), new SourceLOD(), new SourceLOD() };
 
         for (int i = 0; i < result.lods.Length; i++)
@@ -649,7 +653,7 @@ public class VegetationSpeciesFactoryWindow : EditorWindow
             SourceLOD sourceLOD = result.lods[i];
             if (sourceLOD == null || !sourceLOD.IsValid) continue;
 
-            if (!VegetationMaterialAdapter.TryAdaptMaterials(sourceLOD.materials, shaderAdapterProfile, materialFolder, out Material[] adaptedMaterials, out error))
+            if (!VegetationMaterialAdapter.TryAdaptMaterials(sourceLOD.materials, shaderAdapterProfile, materialFolder, out Material[] adaptedMaterials, out error, preserveExisting: true))
             {
                 error = $"LOD{i} 材质适配失败：{error}";
                 return false;
@@ -659,8 +663,10 @@ public class VegetationSpeciesFactoryWindow : EditorWindow
             adaptedLODs[i].materials = adaptedMaterials;
         }
 
-        string marker = BuildSpeciesMarker(result.assetGuid);
-        species = FindExistingSpecies(speciesFolder, marker);
+        species = FindExistingSpecies(speciesFolder, marker, adaptedLODs);
+
+        // A matching resource set is reusable without rewriting any existing Species.
+        if (species != null) return true;
 
         if (species == null)
         {
@@ -672,10 +678,6 @@ public class VegetationSpeciesFactoryWindow : EditorWindow
             AssetDatabase.CreateAsset(species, path);
             WriteSpeciesMarker(path, marker);
             created = true;
-        }
-        else
-        {
-            Undo.RecordObject(species, "Update Vegetation Species Resources");
         }
 
         CopyLOD(adaptedLODs[0], species.lod0);
@@ -702,7 +704,8 @@ public class VegetationSpeciesFactoryWindow : EditorWindow
         destination.materials = (Material[])source.materials.Clone();
     }
 
-    private static VegetationSpecies FindExistingSpecies(string speciesFolder, string marker)
+    private static VegetationSpecies FindExistingSpecies(string speciesFolder, string marker, SourceLOD[] lods,
+        VegetationShaderAdapterProfile profile = null)
     {
         if (string.IsNullOrEmpty(marker) || !AssetDatabase.IsValidFolder(speciesFolder)) return null;
 
@@ -714,7 +717,11 @@ public class VegetationSpeciesFactoryWindow : EditorWindow
             if (importer == null || importer.userData != marker) continue;
 
             VegetationSpecies species = AssetDatabase.LoadAssetAtPath<VegetationSpecies>(path);
-            if (species != null) return species;
+            if (species != null &&
+                VegetationSpeciesRenderingSignature.LODMatches(species.lod0, lods[0].mesh, lods[0].materials, profile) &&
+                VegetationSpeciesRenderingSignature.LODMatches(species.lod1, lods[1].mesh, lods[1].materials, profile) &&
+                VegetationSpeciesRenderingSignature.LODMatches(species.lod2, lods[2].mesh, lods[2].materials, profile) &&
+                VegetationSpeciesRenderingSignature.LODMatches(species.lod3, lods[3].mesh, lods[3].materials, profile)) return species;
         }
 
         return null;

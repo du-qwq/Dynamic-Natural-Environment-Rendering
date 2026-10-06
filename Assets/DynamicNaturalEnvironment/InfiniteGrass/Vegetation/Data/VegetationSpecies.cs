@@ -64,6 +64,13 @@ public class VegetationSpecies : ScriptableObject
     [Min(0f), Tooltip("超过该距离后完全剔除")]
     public float cullDistance = 200f;
 
+    [Header("Mesh LOD Cross Fade")]
+    [Tooltip("在相邻有效 Mesh LOD 的距离边界使用 Dither Crossfade。草密度 LOD 不受影响。")]
+    public bool enableLODCrossFade = true;
+
+    [Min(0f), Tooltip("Mesh LOD 过渡带宽度，单位为世界空间米。0 表示硬切。")]
+    public float lodCrossFadeWidth = 8f;
+
     [Header("草密度LOD")]
     [Range(0f, 1f), Tooltip("草在中距离保留的实例比例")]
     public float grassMidDensity = 0.6f;
@@ -186,6 +193,7 @@ public class VegetationSpecies : ScriptableObject
         sphereRadius = Mathf.Max(0.001f, sphereRadius);
 
         shadowCullDistance = Mathf.Max(0f, shadowCullDistance);
+        lodCrossFadeWidth = Mathf.Max(0f, lodCrossFadeWidth);
         shadowLODScale = shadowLODScale <= 0f ? 1f : Mathf.Clamp(shadowLODScale, 0.1f, 2f);
         horizontalBoundsPadding = Mathf.Max(0f, horizontalBoundsPadding);
         verticalBoundsPadding = Mathf.Max(0f, verticalBoundsPadding);

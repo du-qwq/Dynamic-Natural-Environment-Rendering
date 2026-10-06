@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Reflection;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
@@ -13,16 +14,21 @@ public class VegetationRendererFeature : ScriptableRendererFeature
         public bool renderSceneViewDuringPlay = false;
         public bool renderPreviewCamera = false;
         public RenderPassEvent renderPassEvent = RenderPassEvent.BeforeRenderingOpaques;
+        public bool enableAdditionalLights = true;
+        [Range(0, 8)] public int maxVegetationAdditionalLights = 8;
+        public bool enableDepthNormalsPass = true;
     }
 
     public Settings settings = new Settings();
 
     private VegetationForwardPass forwardPass;
+    private VegetationDepthNormalsPass depthNormalsPass;
 
     public override void Create()
     {
-        forwardPass = new VegetationForwardPass();
+        forwardPass = new VegetationForwardPass(settings);
         forwardPass.renderPassEvent = settings.renderPassEvent;
+        depthNormalsPass = new VegetationDepthNormalsPass();
     }
 
     public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
@@ -56,6 +62,15 @@ public class VegetationRendererFeature : ScriptableRendererFeature
 
         forwardPass.renderPassEvent = settings.renderPassEvent;
 
+        IReadOnlyList<VegetationRenderer> activeRenderers = VegetationRenderer.ActiveRenderers;
+        for (int i = 0; settings.enableDepthNormalsPass && i < activeRenderers.Count; i++)
+        {
+            VegetationRenderer vegetationRenderer = activeRenderers[i];
+            if (vegetationRenderer == null || !vegetationRenderer.isActiveAndEnabled) continue;
+            if (!vegetationRenderer.ShouldRenderForwardForCamera(camera)) continue;
+            renderer.EnqueuePass(depthNormalsPass);
+            break;
+        }
         renderer.EnqueuePass(forwardPass);
     }
 
@@ -79,10 +94,75 @@ public class VegetationRendererFeature : ScriptableRendererFeature
         if (verboseInterval == int.MaxValue) verboseInterval = 120;
     }
 
+    private sealed class VegetationDepthNormalsPass : ScriptableRenderPass
+    {
+        private static readonly FieldInfo normalsTextureField = typeof(UniversalRenderer).GetField("m_NormalsTexture", BindingFlags.Instance | BindingFlags.NonPublic);
+        private static readonly FieldInfo depthTextureField = typeof(UniversalRenderer).GetField("m_DepthTexture", BindingFlags.Instance | BindingFlags.NonPublic);
+        private static readonly PropertyInfo useDepthPrimingProperty = typeof(ScriptableRenderer).GetProperty("useDepthPriming", BindingFlags.Instance | BindingFlags.NonPublic);
+        private readonly ProfilingSampler depthNormalsProfilingSampler = new ProfilingSampler("Vegetation DepthNormals");
+        private bool targetReady;
+
+        public VegetationDepthNormalsPass()
+        {
+            renderPassEvent = RenderPassEvent.AfterRenderingPrePasses;
+            ConfigureInput(ScriptableRenderPassInput.Normal);
+        }
+
+        public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
+        {
+            targetReady = false;
+            ScriptableRenderer renderer = renderingData.cameraData.renderer;
+            if (!(renderer is UniversalRenderer) || normalsTextureField == null || depthTextureField == null) return;
+            RTHandle normals = normalsTextureField.GetValue(renderer) as RTHandle;
+            bool useDepthPriming = useDepthPrimingProperty != null && (bool)useDepthPrimingProperty.GetValue(renderer);
+            RTHandle depth = useDepthPriming ? renderer.cameraDepthTargetHandle : depthTextureField.GetValue(renderer) as RTHandle;
+            if (normals == null || depth == null) return;
+            ConfigureTarget(normals, depth);
+            ConfigureClear(ClearFlag.None, Color.clear);
+            targetReady = true;
+        }
+
+        public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
+        {
+            Camera camera = renderingData.cameraData.camera;
+            if (camera == null || !targetReady) return;
+
+            CommandBuffer cmd = CommandBufferPool.Get("Vegetation DepthNormals");
+            try
+            {
+                using (new ProfilingScope(cmd, depthNormalsProfilingSampler))
+                {
+                    IReadOnlyList<VegetationRenderer> renderers = VegetationRenderer.ActiveRenderers;
+                    int additionalLightsCount = Mathf.Max(0, renderingData.lightData.additionalLightsCount);
+                    for (int i = 0; i < renderers.Count; i++)
+                    {
+                        VegetationRenderer vegetationRenderer = renderers[i];
+                        if (vegetationRenderer == null || !vegetationRenderer.isActiveAndEnabled) continue;
+                        if (!vegetationRenderer.ShouldRenderForwardForCamera(camera)) continue;
+                        vegetationRenderer.PrepareForCamera(cmd, camera, 0, additionalLightsCount);
+                        vegetationRenderer.RenderDepthNormals(cmd, camera);
+                    }
+                }
+                context.ExecuteCommandBuffer(cmd);
+            }
+            finally
+            {
+                CommandBufferPool.Release(cmd);
+            }
+        }
+    }
+
     private sealed class VegetationForwardPass : ScriptableRenderPass
     {
+        private static readonly FieldInfo renderingModeField = typeof(UniversalRenderer).GetField("m_RenderingMode", BindingFlags.Instance | BindingFlags.NonPublic);
+        private readonly Settings settings;
         private readonly ProfilingSampler vegetationProfilingSampler = new ProfilingSampler("Vegetation Forward Total");
         private readonly ProfilingSampler vegetationDrawProfilingSampler = new ProfilingSampler("Vegetation Forward Draw");
+
+        public VegetationForwardPass(Settings settings)
+        {
+            this.settings = settings;
+        }
 
         public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
         {
@@ -128,6 +208,19 @@ public class VegetationRendererFeature : ScriptableRendererFeature
                 return;
             }
 
+            int cameraAdditionalLights = Mathf.Max(0, renderingData.lightData.additionalLightsCount);
+            bool isForward = renderingData.cameraData.renderer is UniversalRenderer universalRenderer
+                && renderingModeField != null
+                && (RenderingMode)renderingModeField.GetValue(universalRenderer) == RenderingMode.Forward;
+            int additionalLightsCount = settings.enableAdditionalLights && isForward
+                && renderingData.lightData.supportsAdditionalLights
+                ? Mathf.Min(cameraAdditionalLights,
+                    Mathf.Max(0, renderingData.lightData.maxPerObjectAdditionalLightsCount),
+                    Mathf.Clamp(settings.maxVegetationAdditionalLights, 0, 8))
+                : 0;
+            VegetationDiagnostics.AdditionalLights(camera, cameraAdditionalLights, additionalLightsCount,
+                settings.enableAdditionalLights, isForward, diagnosticsMode, verboseInterval);
+
             CommandBuffer cmd = CommandBufferPool.Get();
 
             try
@@ -144,9 +237,8 @@ public class VegetationRendererFeature : ScriptableRendererFeature
 
                         VegetationDiagnostics.Culling(camera, passID, diagnosticsMode, verboseInterval);
                         // Indirect draws have no Renderer from which URP can build a
-                        // per-object light list. Pass the camera-visible count explicitly;
+                        // per-object light list. Pass a capped camera-visible count;
                         // vegetation shaders index URP's camera-global light data directly.
-                        int additionalLightsCount = Mathf.Max(0, renderingData.lightData.additionalLightsCount);
                         vegetationRenderer.PrepareForCamera(cmd, camera, passID, additionalLightsCount);
                         VegetationDiagnostics.CopyCounter(camera, passID, diagnosticsMode, verboseInterval);
                         VegetationDiagnostics.Draw(camera, passID, diagnosticsMode, verboseInterval);

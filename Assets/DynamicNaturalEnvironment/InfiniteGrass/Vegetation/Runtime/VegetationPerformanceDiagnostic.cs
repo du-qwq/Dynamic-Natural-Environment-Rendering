@@ -9,7 +9,7 @@ using UnityEngine.Rendering.Universal;
 
 [DisallowMultipleComponent]
 [AddComponentMenu("Vegetation/Vegetation Performance Diagnostic")]
-public sealed class VegetationPerformanceDiagnostic : MonoBehaviour
+public sealed partial class VegetationPerformanceDiagnostic : MonoBehaviour
 {
     [Header("General")]
     public bool enableDiagnostics = true;
@@ -162,6 +162,7 @@ public sealed class VegetationPerformanceDiagnostic : MonoBehaviour
 
     private void OnDisable()
     {
+        StopBenchmarkAndRestore();
         CloseCSV();
         DisposeRecorder(ref gcAllocatedRecorder);
         DisposeRecorder(ref gcUsedRecorder);
@@ -192,6 +193,7 @@ public sealed class VegetationPerformanceDiagnostic : MonoBehaviour
         }
 
         CaptureFrameTiming();
+        CaptureBenchmarkFrame();
         double now = Time.realtimeSinceStartupAsDouble;
         bool overlayDue = now >= nextSampleTime;
         bool csvDue = writeCSV && now >= nextCSVTime;
@@ -454,7 +456,7 @@ public sealed class VegetationPerformanceDiagnostic : MonoBehaviour
         overlayBuilder.AppendLine("Vegetation");
         overlayBuilder.Append("Instances          ").Append(snapshot.instanceCount).Append(" (initial ").Append(initialInstanceCount).AppendLine(")");
         overlayBuilder.Append("Render Groups      ").Append(snapshot.renderGroupCount).Append("   Species ").Append(snapshot.speciesCount).AppendLine();
-        overlayBuilder.Append("Chunks             ").Append(snapshot.chunkCount).Append("   Visible Ranges ").Append(snapshot.visibleRanges).AppendLine();
+        overlayBuilder.Append("Chunks             ").Append(snapshot.chunkCount).Append("   Visible Group Ranges ").Append(snapshot.visibleRanges).AppendLine();
         overlayBuilder.Append("Forward Dispatches ").Append(snapshot.forwardDispatches).Append("   Draws ").Append(snapshot.forwardDraws).AppendLine();
         overlayBuilder.Append("Shadow Dispatches  ").Append(snapshot.shadowDispatches).Append("   Draws ").Append(snapshot.shadowDraws).AppendLine();
         overlayBuilder.Append("Database Rev       ").Append(snapshot.dataRevision).Append(" (initial ").Append(initialDatabaseRevision).AppendLine(")");
@@ -624,7 +626,7 @@ public sealed class VegetationPerformanceDiagnostic : MonoBehaviour
             Directory.CreateDirectory(Application.persistentDataPath);
             csvPath = Path.Combine(Application.persistentDataPath, "VegetationPerformance_" + DateTime.Now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture) + ".csv");
             csvWriter = new StreamWriter(csvPath, false, new UTF8Encoding(false), 16384);
-            csvWriter.WriteLine("Time,FPSCurrent,FPSRollingAverage,FrameMSCurrent,FrameMSRollingAverage,CPUFrameMSCurrent,CPUFrameMSRollingAverage,GPUFrameMSCurrent,GPUFrameMSRollingAverage,GCAllocated,MemoryUsed,MemoryDelta,GCUsed,MemoryReserved,MonoUsed,MonoHeap,GfxUsed,DatabaseRevision,InstanceCount,SpeciesCount,RenderGroupCount,DatabaseChunkCount,RendererChunkRangeCount,VisibleChunkRanges,ForwardCameraCount,CameraCount,ShadowCameraStateCount,ForwardDispatchCount,ForwardDrawCount,ShadowDispatchCount,ShadowDrawCount,ActiveColliderCount,PooledColliderCount,ScannedInstanceCount,ScannedChunkCount,VSyncCount,TargetFrameRate,ScreenWidth,ScreenHeight,RefreshRate,MSAA");
+            csvWriter.WriteLine("Time,FPSCurrent,FPSRollingAverage,FrameMSCurrent,FrameMSRollingAverage,CPUFrameMSCurrent,CPUFrameMSRollingAverage,GPUFrameMSCurrent,GPUFrameMSRollingAverage,GCAllocated,MemoryUsed,MemoryDelta,GCUsed,MemoryReserved,MonoUsed,MonoHeap,GfxUsed,DatabaseRevision,InstanceCount,SpeciesCount,RenderGroupCount,DatabaseChunkCount,RendererChunkRangeCount,VisibleRenderGroupChunkRangeCount,ForwardCameraCount,CameraCount,ShadowCameraStateCount,ForwardDispatchCount,ForwardDrawCount,ShadowDispatchCount,ShadowDrawCount,ActiveColliderCount,PooledColliderCount,ScannedInstanceCount,ScannedChunkCount,VSyncCount,TargetFrameRate,ScreenWidth,ScreenHeight,RefreshRate,MSAA");
         }
         catch (Exception exception)
         {

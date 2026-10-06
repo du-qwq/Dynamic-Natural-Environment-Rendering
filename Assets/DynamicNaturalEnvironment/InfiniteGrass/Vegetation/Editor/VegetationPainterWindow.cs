@@ -16,6 +16,7 @@ public class VegetationPainterWindow : EditorWindow
     private PaintMode paintMode = PaintMode.Paint;
 
     private bool paintingEnabled;
+    private bool enableUnityUndo;
     private bool eraseOnlySelectedSpecies = true;
 
     private float brushRadius = 5f;
@@ -111,6 +112,8 @@ public class VegetationPainterWindow : EditorWindow
         EditorGUILayout.Space();
 
         paintingEnabled = EditorGUILayout.Toggle("Enable Editing", paintingEnabled);
+        enableUnityUndo = EditorGUILayout.Toggle("Unity Undo (Slow)", enableUnityUndo);
+        if (enableUnityUndo) EditorGUILayout.HelpBox("大量实例时 Unity Undo 会复制整个 VegetationDatabase，可能造成明显卡顿。大规模刷植被建议关闭。", MessageType.Warning);
         paintMode = (PaintMode)GUILayout.Toolbar((int)paintMode, new[] { "Paint", "Erase", "Select" });
 
         EditorGUILayout.Space();
@@ -285,7 +288,7 @@ public class VegetationPainterWindow : EditorWindow
             if (selectedTransformDirty && evt.rawType == EventType.MouseUp)
             {
                 selectedTransformDirty = false;
-                AssetDatabase.SaveAssets();
+                EditorApplication.QueuePlayerLoopUpdate();
             }
 
             sceneView.Repaint();
@@ -400,16 +403,16 @@ public class VegetationPainterWindow : EditorWindow
 
         if (!EditorGUI.EndChangeCheck()) return;
 
-        Undo.RecordObject(database, "Edit Vegetation Instance");
+        if (enableUnityUndo) Undo.RecordObject(database, "Edit Vegetation Instance");
 
         if (!database.UpdateInstanceTransform(selectedInstanceID, newPosition, newRotation, newScale)) return;
 
         EditorUtility.SetDirty(database);
-
-        if (renderer != null) renderer.Rebuild();
+        EditorApplication.QueuePlayerLoopUpdate();
 
         selectedTransformDirty = true;
 
+        SceneView.RepaintAll();
         Repaint();
     }
 
@@ -426,16 +429,14 @@ public class VegetationPainterWindow : EditorWindow
     {
         if (database == null || selectedInstanceID < 0) return;
 
-        Undo.RecordObject(database, "Delete Vegetation Instance");
+        if (enableUnityUndo) Undo.RecordObject(database, "Delete Vegetation Instance");
 
         if (!database.RemoveInstance(selectedInstanceID)) return;
 
         selectedInstanceID = -1;
 
         EditorUtility.SetDirty(database);
-        AssetDatabase.SaveAssets();
-
-        if (renderer != null) renderer.Rebuild();
+        EditorApplication.QueuePlayerLoopUpdate();
 
         SceneView.RepaintAll();
         Repaint();
@@ -443,12 +444,7 @@ public class VegetationPainterWindow : EditorWindow
 
     private void BeginStroke()
     {
-        Undo.RecordObject(
-            database,
-            paintMode == PaintMode.Paint
-                ? "Paint Vegetation"
-                : "Erase Vegetation"
-        );
+        if (enableUnityUndo) Undo.RecordObject(database, paintMode == PaintMode.Paint ? "Paint Vegetation" : "Erase Vegetation");
 
         database.BeginBatchMutation();
 
@@ -472,12 +468,7 @@ public class VegetationPainterWindow : EditorWindow
         database.EndBatchMutation();
 
         EditorUtility.SetDirty(database);
-        AssetDatabase.SaveAssets();
-
-        if (renderer != null)
-        {
-            renderer.Rebuild();
-        }
+        EditorApplication.QueuePlayerLoopUpdate();
 
         SceneView.RepaintAll();
         Repaint();

@@ -52,6 +52,10 @@ Shader "Vegetation/BushBillboard"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
         #include "VegetationIndirectCommon.hlsl"
+        #include "VegetationLOD.hlsl"
+        #include "VegetationDepthNormals.hlsl"
+        #include "VegetationReceiveShadows.hlsl"
+        #include "VegetationAdditionalLights.hlsl"
 
         TEXTURE2D(_ColorID);
         SAMPLER(sampler_ColorID);
@@ -123,7 +127,8 @@ Shader "Vegetation/BushBillboard"
             right.y=0;
             right=normalize(right);
 
-            return pivotWS+right*localOffset.z+float3(0,localOffset.y,0)+forward*localOffset.x;
+            // Imported billboard meshes are XY planes; keep X across the camera-facing plane.
+            return pivotWS+right*localOffset.x+float3(0,localOffset.y,0)+forward*localOffset.z;
         }
         
         float3 GetBillboardColor(float3 positionWS,float3 normalWS,half4 tex)
@@ -158,6 +163,8 @@ Shader "Vegetation/BushBillboard"
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_CASCADE
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_SCREEN
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
+            #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
+            #pragma multi_compile_fragment _ _LIGHT_COOKIES
             #pragma multi_compile_fog
             #pragma shader_feature_local_fragment _INVERTGRADIENT_ON
             #pragma shader_feature_local_fragment _WINDDEBUGVIEW_ON
@@ -175,6 +182,7 @@ Shader "Vegetation/BushBillboard"
             struct Varyings
             {
                 float4 positionCS:SV_POSITION;
+                nointerpolation float lodDistance : TEXCOORD15;
                 float3 positionWS:TEXCOORD0;
                 float3 normalWS:TEXCOORD1;
                 float4 tangentWS:TEXCOORD2;
@@ -188,6 +196,7 @@ Shader "Vegetation/BushBillboard"
                 Varyings output;
 
                 float3 pivotWS=GetVegetationPivotWS(input.instanceID);
+                output.lodDistance = GetVegetationLODDistance(pivotWS);
                 float3 positionWS=ApplyCameraBillboard(input.positionOS,pivotWS,input.instanceID);
                 float3 normalWS=normalize(_CameraForwardWS);
                 float3 tangentWS=normalize(cross(float3(0,1,0),normalWS));
@@ -209,6 +218,7 @@ Shader "Vegetation/BushBillboard"
                 float2 uv=input.uv*_ColorID_ST.xy+_ColorID_ST.zw;
                 half4 tex=SAMPLE_TEXTURE2D(_ColorID,sampler_ColorID,uv);
                 clip(tex.a-_Cutoff);
+                ApplyVegetationLODCrossFade(input.lodDistance, input.positionCS.xy);
 
                 float3 N=normalize(input.normalWS);
                 float3 T=normalize(input.tangentWS.xyz);
@@ -230,7 +240,7 @@ Shader "Vegetation/BushBillboard"
 
                 float ndl=dot(N,mainLight.direction);
                 float wrappedNdotL=saturate((ndl+_LightWrap)/(1.0+_LightWrap));
-                float shadowAttenuation=max(mainLight.shadowAttenuation,_ShadowFloor);
+                float shadowAttenuation=max(VegetationMainLightShadowAttenuation(mainLight.shadowAttenuation),_ShadowFloor);
                 float shadow=lerp(1.0,shadowAttenuation,_ShadowStrength);
 
                 float3 ambient=SampleSH(N)*_AmbientStrength;
@@ -241,6 +251,18 @@ Shader "Vegetation/BushBillboard"
                 float specPower=lerp(8.0,128.0,saturate(_SmoothnessPower));
                 float spec=pow(saturate(dot(N,halfDir)),specPower)*saturate(_SmoothnessPower);
                 float3 color=baseColor*(ambient+direct)+mainLight.color*spec*mainLight.distanceAttenuation*shadow;
+
+                [loop]
+                for (int lightIndex = 0; lightIndex < GetVegetationAdditionalLightsCount(); ++lightIndex)
+                {
+                    Light light = GetVegetationAdditionalLight((uint)lightIndex, input.positionWS, unity_ProbesOcclusion);
+                    float localNdotL = saturate((dot(N, light.direction) + _LightWrap) / (1.0 + _LightWrap));
+                    float localShadow = lerp(1.0, max(light.shadowAttenuation, _ShadowFloor), _ShadowStrength);
+                    float3 localHalfDir = SafeNormalize(viewDir + light.direction);
+                    float localSpec = pow(saturate(dot(N, localHalfDir)), specPower) * saturate(_SmoothnessPower);
+                    color += light.color * light.distanceAttenuation * localShadow
+                        * (baseColor * localNdotL + localSpec);
+                }
 
                 color=MixFog(color,input.fogFactor);
                 return half4(color,tex.a);
@@ -254,7 +276,7 @@ Shader "Vegetation/BushBillboard"
             Name "ShadowCaster"
             Tags { "LightMode"="ShadowCaster" }
 
-            Cull Back
+            Cull Off
             ZWrite On
             ZTest LEqual
             ColorMask 0
@@ -281,6 +303,7 @@ Shader "Vegetation/BushBillboard"
             struct Varyings
             {
                 float4 positionCS:SV_POSITION;
+                nointerpolation float lodDistance : TEXCOORD15;
                 float2 uv:TEXCOORD0;
                 nointerpolation float shadowCutoff:TEXCOORD1;
             };
@@ -289,6 +312,7 @@ Shader "Vegetation/BushBillboard"
             {
                 Varyings output;
                 float3 pivotWS=GetVegetationPivotWS(input.instanceID);
+                output.lodDistance = GetVegetationLODDistance(pivotWS);
                 float3 positionWS=ApplyCameraBillboard(input.positionOS,pivotWS,input.instanceID);
                 float3 normalWS=-normalize(_CameraForwardWS);
                 positionWS=ApplyBillboardWind(positionWS,pivotWS,input.color);
@@ -318,6 +342,7 @@ Shader "Vegetation/BushBillboard"
                 float2 uv=input.uv*_ColorID_ST.xy+_ColorID_ST.zw;
                 half alpha=SAMPLE_TEXTURE2D(_ColorID,sampler_ColorID,uv).a;
                 clip(alpha-input.shadowCutoff);
+                ApplyVegetationLODCrossFade(input.lodDistance, input.positionCS.xy);
                 return 0;
             }
 
@@ -329,7 +354,7 @@ Shader "Vegetation/BushBillboard"
             Name "DepthOnly"
             Tags { "LightMode"="DepthOnly" }
 
-            Cull Back
+            Cull Off
             ZWrite On
             ZTest LEqual
             ColorMask 0
@@ -351,6 +376,7 @@ Shader "Vegetation/BushBillboard"
             struct Varyings
             {
                 float4 positionCS:SV_POSITION;
+                nointerpolation float lodDistance : TEXCOORD15;
                 float2 uv:TEXCOORD0;
             };
 
@@ -358,6 +384,7 @@ Shader "Vegetation/BushBillboard"
             {
                 Varyings output;
                 float3 pivotWS=GetVegetationPivotWS(input.instanceID);
+                output.lodDistance = GetVegetationLODDistance(pivotWS);
                 float3 positionWS=ApplyCameraBillboard(input.positionOS,pivotWS,input.instanceID);
                 positionWS=ApplyBillboardWind(positionWS,pivotWS,input.color);
                 output.positionCS=TransformWorldToHClip(positionWS);
@@ -370,9 +397,69 @@ Shader "Vegetation/BushBillboard"
                 float2 uv=input.uv*_ColorID_ST.xy+_ColorID_ST.zw;
                 half alpha=SAMPLE_TEXTURE2D(_ColorID,sampler_ColorID,uv).a;
                 clip(alpha-_Cutoff);
+                ApplyVegetationLODCrossFade(input.lodDistance, input.positionCS.xy);
                 return 0;
             }
 
+            ENDHLSL
+        }
+        Pass
+        {
+            Name "DepthNormalsOnly"
+            Tags { "LightMode"="DepthNormalsOnly" }
+            Cull Off
+            ZWrite On
+            HLSLPROGRAM
+            #pragma target 4.5
+            #pragma vertex DepthNormalsVert
+            #pragma fragment DepthNormalsFrag
+            #pragma multi_compile_fragment _ _GBUFFER_NORMALS_OCT
+
+            struct DNAttributes
+            {
+                float3 positionOS : POSITION;
+                float4 tangentOS : TANGENT;
+                float2 uv : TEXCOORD0;
+                float4 color : COLOR;
+                uint instanceID : SV_InstanceID;
+            };
+            struct DNVaryings
+            {
+                float4 positionCS : SV_POSITION;
+                nointerpolation float lodDistance : TEXCOORD15;
+                float3 normalWS : TEXCOORD0;
+                float4 tangentWS : TEXCOORD1;
+                float2 uv : TEXCOORD2;
+            };
+            DNVaryings DepthNormalsVert(DNAttributes input)
+            {
+                DNVaryings output;
+                float3 pivotWS = GetVegetationPivotWS(input.instanceID);
+                output.lodDistance = GetVegetationLODDistance(pivotWS);
+                float3 positionWS = ApplyCameraBillboard(input.positionOS,pivotWS,input.instanceID);
+                positionWS = ApplyBillboardForwardWind(positionWS,pivotWS,input.color);
+                float3 normalWS = normalize(_CameraForwardWS);
+                float3 tangentWS = normalize(cross(float3(0,1,0),normalWS));
+                output.positionCS = TransformWorldToHClip(positionWS);
+                output.normalWS = normalWS;
+                output.tangentWS = float4(tangentWS,input.tangentOS.w);
+                output.uv = input.uv;
+                return output;
+            }
+            half4 DepthNormalsFrag(DNVaryings input) : SV_Target
+            {
+                float2 uv = input.uv*_ColorID_ST.xy+_ColorID_ST.zw;
+                clip(SAMPLE_TEXTURE2D(_ColorID,sampler_ColorID,uv).a-_Cutoff);
+                ApplyVegetationLODCrossFade(input.lodDistance,input.positionCS.xy);
+                float3 normalWS = normalize(input.normalWS);
+                float3 tangentWS = normalize(input.tangentWS.xyz);
+                float3 bitangentWS = normalize(cross(normalWS,tangentWS)*input.tangentWS.w);
+                float2 normalUV = input.uv*_Normal_ST.xy+_Normal_ST.zw;
+                half3 normalTS = UnpackNormalScale(SAMPLE_TEXTURE2D(_Normal,sampler_Normal,normalUV),
+                    max(_NormalPower,0.001));
+                normalWS = normalize(mul(normalTS,float3x3(tangentWS,bitangentWS,normalWS)));
+                return EncodeVegetationDepthNormal(normalWS);
+            }
             ENDHLSL
         }
     }

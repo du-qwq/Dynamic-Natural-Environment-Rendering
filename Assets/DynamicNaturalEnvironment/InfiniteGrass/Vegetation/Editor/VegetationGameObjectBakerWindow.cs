@@ -14,7 +14,7 @@ public class VegetationGameObjectBakerWindow : EditorWindow
     {
         None,
         PrefabGuid,
-        MeshSignature,
+        RenderingSignature,
         Manual
     }
 
@@ -408,10 +408,10 @@ public class VegetationGameObjectBakerWindow : EditorWindow
             }
             EditorGUILayout.EndHorizontal();
         }
-        else if (!SpeciesMeshesMatchSource(group.species, group))
+        else if (!SpeciesRenderingMatchesSource(group.species, group))
         {
             EditorGUILayout.HelpBox(
-                "当前 Species 的 LOD Mesh 结构与源对象不一致。为避免把场景对象转换成错误几何体，该组不会 Bake。",
+                "当前 Species 的 LOD Mesh / SubMesh Material 结构与源对象不一致。为避免把场景对象转换成错误渲染资源，该组不会 Bake。",
                 MessageType.Error
             );
         }
@@ -433,7 +433,7 @@ public class VegetationGameObjectBakerWindow : EditorWindow
     {
         if (group.errors.Count > 0) return "[Invalid]";
         if (group.species == null) return "[Needs Species]";
-        if (!SpeciesMeshesMatchSource(group.species, group)) return "[Mismatch]";
+        if (!SpeciesRenderingMatchesSource(group.species, group)) return "[Mismatch]";
         return "[Ready]";
     }
 
@@ -442,7 +442,7 @@ public class VegetationGameObjectBakerWindow : EditorWindow
         switch (method)
         {
             case SpeciesMatchMethod.PrefabGuid: return "Prefab GUID";
-            case SpeciesMatchMethod.MeshSignature: return "Mesh Signature";
+            case SpeciesMatchMethod.RenderingSignature: return "Rendering Signature";
             case SpeciesMatchMethod.Manual: return "Manual";
             default: return "None";
         }
@@ -723,6 +723,11 @@ public class VegetationGameObjectBakerWindow : EditorWindow
         }
 
         Material[] materials = meshRenderer.sharedMaterials;
+        if (meshRenderer.HasPropertyBlock())
+        {
+            error = "Renderer 使用 MaterialPropertyBlock 覆盖。当前 Species 无法保存这些渲染参数，请先将覆盖写入独立 Material 资产。";
+            return false;
+        }
         if (!AreMaterialsUsable(materials))
         {
             error = "存在空 Material，或 Material 列表为空。";
@@ -863,7 +868,7 @@ public class VegetationGameObjectBakerWindow : EditorWindow
             for (int i = 0; i < speciesCandidates.Count; i++)
             {
                 VegetationSpecies species = speciesCandidates[i];
-                if (species == null) continue;
+                if (species == null || !SpeciesRenderingMatchesSource(species, group)) continue;
 
                 if (!string.Equals(GetSpeciesSourcePrefabGuid(species), group.sourcePrefabGuid, StringComparison.Ordinal))
                 {
@@ -887,27 +892,27 @@ public class VegetationGameObjectBakerWindow : EditorWindow
             }
         }
 
-        VegetationSpecies meshMatch = null;
-        int meshMatchCount = 0;
+        VegetationSpecies renderingMatch = null;
+        int renderingMatchCount = 0;
 
         for (int i = 0; i < speciesCandidates.Count; i++)
         {
             VegetationSpecies species = speciesCandidates[i];
-            if (species == null || !SpeciesMeshesMatchSource(species, group)) continue;
+            if (species == null || !SpeciesRenderingMatchesSource(species, group)) continue;
 
-            meshMatch = species;
-            meshMatchCount++;
+            renderingMatch = species;
+            renderingMatchCount++;
         }
 
-        if (meshMatchCount == 1)
+        if (renderingMatchCount == 1)
         {
-            matchMethod = SpeciesMatchMethod.MeshSignature;
-            return meshMatch;
+            matchMethod = SpeciesMatchMethod.RenderingSignature;
+            return renderingMatch;
         }
 
-        if (meshMatchCount > 1)
+        if (renderingMatchCount > 1)
         {
-            warning = $"Prefab GUID 不可用，并且有 {meshMatchCount} 个 Species 使用相同 LOD Mesh Signature。为避免误配，请手动指定。";
+            warning = $"未找到唯一的 Prefab GUID + 渲染资源匹配，并且有 {renderingMatchCount} 个 Species 使用相同 LOD Rendering Signature。为避免误配，请手动指定。";
         }
 
         return null;
@@ -1104,7 +1109,7 @@ public class VegetationGameObjectBakerWindow : EditorWindow
                         continue;
                     }
 
-                    database.AddInstance(group.species, position, rotation, scale);
+                    database.AddInstance(group.species, position, rotation, scale, VegetationInstanceSource.Imported, 0, 0);
                     bakedCount++;
                     sourcesToHandle.Add(sourceInstance);
                 }
@@ -1422,26 +1427,21 @@ public class VegetationGameObjectBakerWindow : EditorWindow
             Mathf.Abs(a.z - b.z) <= tolerance;
     }
 
-    private static bool SpeciesMeshesMatchSource(VegetationSpecies species, SourceGroup group)
+    private static bool SpeciesRenderingMatchesSource(VegetationSpecies species, SourceGroup group)
     {
         if (species == null || group == null) return false;
 
         return
-            LODMeshMatches(species.lod0, group.lod0) &&
-            LODMeshMatches(species.lod1, group.lod1) &&
-            LODMeshMatches(species.lod2, group.lod2) &&
-            LODMeshMatches(species.lod3, group.lod3);
+            LODRenderingMatches(species.lod0, group.lod0) &&
+            LODRenderingMatches(species.lod1, group.lod1) &&
+            LODRenderingMatches(species.lod2, group.lod2) &&
+            LODRenderingMatches(species.lod3, group.lod3);
     }
 
-    private static bool LODMeshMatches(VegetationLODAsset speciesLOD, SourceLOD sourceLOD)
+    private static bool LODRenderingMatches(VegetationLODAsset speciesLOD, SourceLOD sourceLOD)
     {
-        bool speciesValid = speciesLOD != null && speciesLOD.IsValid;
-        bool sourceValid = sourceLOD != null && sourceLOD.IsValid;
-
-        if (speciesValid != sourceValid) return false;
-        if (!speciesValid) return true;
-
-        return speciesLOD.mesh == sourceLOD.mesh;
+        return VegetationSpeciesRenderingSignature.LODMatches(
+            speciesLOD, sourceLOD?.mesh, sourceLOD?.materials);
     }
 
     private static bool AreMaterialsUsable(Material[] materials)
@@ -1472,16 +1472,7 @@ public class VegetationGameObjectBakerWindow : EditorWindow
 
     private static string BuildLODKey(SourceLOD lod)
     {
-        if (lod == null || !lod.IsValid) return "None";
-
-        string key = lod.mesh.GetInstanceID().ToString();
-
-        for (int i = 0; i < lod.materials.Length; i++)
-        {
-            key += "_" + lod.materials[i].GetInstanceID();
-        }
-
-        return key;
+        return VegetationSpeciesRenderingSignature.BuildLODKey(lod?.mesh, lod?.materials);
     }
 
     private bool IsGroupReady(SourceGroup group)
@@ -1490,7 +1481,7 @@ public class VegetationGameObjectBakerWindow : EditorWindow
             group != null &&
             group.errors.Count == 0 &&
             group.species != null &&
-            SpeciesMeshesMatchSource(group.species, group);
+            SpeciesRenderingMatchesSource(group.species, group);
     }
 
     private int CountReadyInstances()

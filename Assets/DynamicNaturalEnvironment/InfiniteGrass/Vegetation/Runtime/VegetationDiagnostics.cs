@@ -29,6 +29,9 @@ internal struct VegetationDispatchStats
 
 internal static class VegetationDiagnostics
 {
+    internal static event Action<int, int, int, int> BenchmarkAdditionalLights;
+    internal static event Action<int, int, int, int> BenchmarkShadowCandidateSlots;
+    internal static event Action<int, int, long, long, long, long, bool, bool, long, bool> BenchmarkForwardReadback;
     private enum CameraStage
     {
         None,
@@ -97,7 +100,7 @@ internal static class VegetationDiagnostics
         public int shadowIndirectDrawCount;
         public int shadowSourceInstances;
         public int pendingReadbacks;
-        public long visibleForwardInstances;
+        public long visibleForwardLODReferences;
         public bool ended;
         public bool emitSummary;
     }
@@ -165,6 +168,15 @@ internal static class VegetationDiagnostics
     public static bool ShouldWriteVerbose(VegetationDiagnosticsMode mode, int interval)
     {
         return mode == VegetationDiagnosticsMode.Verbose && ShouldReadback(interval) && TryTakeVerboseLogSlot();
+    }
+
+    public static void AdditionalLights(Camera camera, int cameraCount, int usedCount,
+        bool enabled, bool isForward, VegetationDiagnosticsMode mode, int verboseInterval)
+    {
+        if (camera != null) BenchmarkAdditionalLights?.Invoke(Time.frameCount, camera.GetInstanceID(), cameraCount, usedCount);
+        if (!ShouldWriteVerbose(mode, verboseInterval)) return;
+        Debug.Log($"[VegetationDiag][AdditionalLights] Camera={camera.name}, CameraVisible={cameraCount}, " +
+            $"Used={usedCount}, Enabled={enabled}, Forward={isForward}, Cap=8");
     }
 
     public static void AddRenderPasses(
@@ -590,6 +602,7 @@ internal static class VegetationDiagnostics
         if (camera == null) return;
 
         int cameraID = camera.GetInstanceID();
+        BenchmarkShadowCandidateSlots?.Invoke(Time.frameCount, cameraID, workload.sourceInstances, workload.dispatchCount);
         if (!pendingShadowWorkloads.TryGetValue(cameraID, out ShadowWorkload pending))
         {
             pending = new ShadowWorkload();
@@ -619,10 +632,10 @@ internal static class VegetationDiagnostics
         if (passWorkloads.TryGetValue(passID, out PassWorkload workload)) workload.pendingReadbacks++;
     }
 
-    private static void CompleteForwardReadback(long passID, long visibleInstances)
+    private static void CompleteForwardReadback(long passID, long visibleReferences)
     {
         if (!passWorkloads.TryGetValue(passID, out PassWorkload workload)) return;
-        workload.visibleForwardInstances += Math.Max(0L, visibleInstances);
+        workload.visibleForwardLODReferences += Math.Max(0L, visibleReferences);
         workload.pendingReadbacks = Mathf.Max(0, workload.pendingReadbacks - 1);
 
         if (!workload.ended || workload.pendingReadbacks != 0) return;
@@ -630,7 +643,7 @@ internal static class VegetationDiagnostics
         {
             Debug.Log($"[VegetationDiag][WorkloadGPU] Frame={workload.frame}, RenderSequence={workload.passID}, " +
                       $"Camera={workload.cameraName}, CameraID={workload.cameraID}, CameraType={workload.cameraType}, " +
-                      $"Resolution={workload.width}x{workload.height}, VisibleForwardInstances={workload.visibleForwardInstances}, " +
+                      $"Resolution={workload.width}x{workload.height}, VisibleForwardLODReferences={workload.visibleForwardLODReferences}, " +
                       $"ShadowSourceInstances={workload.shadowSourceInstances}");
         }
         passWorkloads.Remove(passID);
@@ -866,6 +879,7 @@ internal static class VegetationDiagnostics
         int safeLimit,
         bool gpuCulling,
         bool gpuLODEnabled,
+        bool crossFadeEnabled,
         long passID,
         int lod0Capacity,
         int lod1Capacity,
@@ -889,6 +903,7 @@ internal static class VegetationDiagnostics
             safeLimit,
             gpuCulling,
             gpuLODEnabled,
+            crossFadeEnabled,
             passID,
             lod0Capacity,
             lod1Capacity,
@@ -953,6 +968,7 @@ internal static class VegetationDiagnostics
         private readonly int safeLimit;
         private readonly bool gpuCulling;
         private readonly bool gpuLODEnabled;
+        private readonly bool crossFadeEnabled;
         private readonly long passID;
         private readonly bool forceSummary;
         private readonly long[] visibleCounters = { -1, -1, -1, -1 };
@@ -977,6 +993,7 @@ internal static class VegetationDiagnostics
             int safeLimit,
             bool gpuCulling,
             bool gpuLODEnabled,
+            bool crossFadeEnabled,
             long passID,
             int lod0Capacity,
             int lod1Capacity,
@@ -1002,6 +1019,7 @@ internal static class VegetationDiagnostics
             this.safeLimit = safeLimit;
             this.gpuCulling = gpuCulling;
             this.gpuLODEnabled = gpuLODEnabled;
+            this.crossFadeEnabled = crossFadeEnabled;
             this.passID = passID;
             this.forceSummary = forceSummary;
             visibleCapacities[0] = lod0Capacity;
@@ -1171,15 +1189,27 @@ internal static class VegetationDiagnostics
                 if (visibleCounters[i] >= 0) visibleSum += visibleCounters[i];
             }
 
-            if (gpuCulling && visibleSum > totalInstanceCount)
+            long maximumReferences = crossFadeEnabled ? totalInstanceCount * 2L : totalInstanceCount;
+            if (gpuCulling && visibleSum > maximumReferences)
             {
                 CriticalOnce($"lod-sum-{cameraID}-{species}",
-                    $"Sum of LOD append counters exceeds the Species instance count. {ContextText()}, Species={species}, " +
+                    $"LOD append references exceed the allowed per-instance limit. {ContextText()}, Species={species}, " +
                     $"totalInstanceCount={totalInstanceCount}, LOD0={visibleCounters[0]}, LOD1={visibleCounters[1]}, " +
-                    $"LOD2={visibleCounters[2]}, LOD3={visibleCounters[3]}, Sum={visibleSum}");
+                    $"LOD2={visibleCounters[2]}, LOD3={visibleCounters[3]}, References={visibleSum}, Maximum={maximumReferences}");
             }
 
             CompleteForwardReadback(passID, gpuCulling ? visibleSum : totalInstanceCount);
+
+            long lod0 = visibleCounters[0], lod1 = visibleCounters[1];
+            long lod2 = visibleCounters[2], lod3 = visibleCounters[3];
+            // The bypass path submits reserved GPU slots. Its indirect args are
+            // capacity, not a count of visible active instances.
+            bool valid = gpuCulling && lod0 >= 0 && lod1 >= 0 && lod2 >= 0 && lod3 >= 0;
+            long forwardVisibleInstances = !gpuCulling ? -1L : !gpuLODEnabled ? lod0 :
+                !crossFadeEnabled ? visibleSum : -1L;
+            bool forwardVisibleValid = forwardVisibleInstances >= 0;
+            BenchmarkForwardReadback?.Invoke(frame, cameraID, lod0, lod1, lod2, lod3, crossFadeEnabled, valid,
+                forwardVisibleInstances, forwardVisibleValid);
 
             if (!forceSummary) return;
 
@@ -1192,6 +1222,7 @@ internal static class VegetationDiagnostics
                 .Append(", ResetBuffers=VisibleLOD0/1/2/3+DummyLOD1/2/3")
                 .Append(", GPUCulling=").Append(gpuCulling)
                 .Append(", GPULOD=").Append(gpuLODEnabled)
+                .Append(", MeshCrossFade=").Append(crossFadeEnabled)
                 .Append(", Kernel=").Append(kernel)
                 .Append(", numthreads=(").Append(threadX).Append(',').Append(threadY).Append(',').Append(threadZ).Append(')')
                 .Append(", DispatchInstances=").Append(dispatch.dispatchInstanceCount)
@@ -1201,6 +1232,7 @@ internal static class VegetationDiagnostics
                 .Append(", TheoreticalThreads=").Append(dispatch.theoreticalThreadCount)
                 .Append(", VisibleLOD=[").Append(visibleCounters[0]).Append(',').Append(visibleCounters[1]).Append(',')
                 .Append(visibleCounters[2]).Append(',').Append(visibleCounters[3]).Append(']')
+                .Append(", LODAppendReferences=").Append(visibleSum)
                 .Append(", VisibleCapacity=[").Append(visibleCapacities[0]).Append(',').Append(visibleCapacities[1]).Append(',')
                 .Append(visibleCapacities[2]).Append(',').Append(visibleCapacities[3]).Append(']');
 

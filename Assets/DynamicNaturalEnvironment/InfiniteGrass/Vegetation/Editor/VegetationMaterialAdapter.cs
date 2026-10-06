@@ -10,7 +10,7 @@ public static class VegetationMaterialAdapter
     private const string MarkerPrefix = "VegetationMaterialAdapter:v1";
     private static readonly Dictionary<string, Material> SessionCache = new Dictionary<string, Material>();
 
-    public static bool TryAdaptMaterial(Material sourceMaterial, VegetationShaderAdapterProfile profile, string outputFolder, out Material adaptedMaterial, out string error)
+    public static bool TryAdaptMaterial(Material sourceMaterial, VegetationShaderAdapterProfile profile, string outputFolder, out Material adaptedMaterial, out string error, bool preserveExisting = false)
     {
         adaptedMaterial = null;
         error = null;
@@ -67,6 +67,11 @@ public static class VegetationMaterialAdapter
             return false;
         }
 
+        // Embedded material subassets can share a GUID; their local IDs distinguish them.
+        if (AssetDatabase.LoadMainAssetAtPath(sourcePath) != sourceMaterial &&
+            AssetDatabase.TryGetGUIDAndLocalFileIdentifier(sourceMaterial, out string _, out long localID))
+            sourceGuid += ":" + localID;
+
         string profilePath = AssetDatabase.GetAssetPath(profile);
 
         if (string.IsNullOrEmpty(profilePath))
@@ -89,10 +94,14 @@ public static class VegetationMaterialAdapter
 
         string cacheKey = BuildCacheKey(sourceGuid, profileGuid, outputFolder);
 
-        if (SessionCache.TryGetValue(cacheKey, out Material cachedMaterial) && cachedMaterial != null)
+        if (SessionCache.TryGetValue(cacheKey, out Material cachedMaterial) && cachedMaterial != null &&
+            (!preserveExisting || ConversionMatches(sourceMaterial, cachedMaterial, profile, mapping)))
         {
-            ApplyConversion(sourceMaterial, cachedMaterial, profile, mapping);
-            EditorUtility.SetDirty(cachedMaterial);
+            if (!preserveExisting)
+            {
+                ApplyConversion(sourceMaterial, cachedMaterial, profile, mapping);
+                EditorUtility.SetDirty(cachedMaterial);
+            }
             adaptedMaterial = cachedMaterial;
             return true;
         }
@@ -100,10 +109,14 @@ public static class VegetationMaterialAdapter
         string marker = BuildMarker(sourceGuid, profileGuid);
         Material existingMaterial = FindExistingGeneratedMaterial(outputFolder, marker);
 
-        if (existingMaterial != null)
+        if (existingMaterial != null &&
+            (!preserveExisting || ConversionMatches(sourceMaterial, existingMaterial, profile, mapping)))
         {
-            ApplyConversion(sourceMaterial, existingMaterial, profile, mapping);
-            EditorUtility.SetDirty(existingMaterial);
+            if (!preserveExisting)
+            {
+                ApplyConversion(sourceMaterial, existingMaterial, profile, mapping);
+                EditorUtility.SetDirty(existingMaterial);
+            }
             SessionCache[cacheKey] = existingMaterial;
             adaptedMaterial = existingMaterial;
             return true;
@@ -117,7 +130,7 @@ public static class VegetationMaterialAdapter
         newMaterial.shader = mapping.targetShader;
         ApplyConversion(sourceMaterial, newMaterial, profile, mapping);
 
-        string assetPath = BuildNewMaterialPath(sourceMaterial, sourceGuid, outputFolder);
+        string assetPath = AssetDatabase.GenerateUniqueAssetPath(BuildNewMaterialPath(sourceMaterial, sourceGuid, outputFolder));
 
         AssetDatabase.CreateAsset(newMaterial, assetPath);
         WriteMarker(assetPath, marker);
@@ -128,7 +141,7 @@ public static class VegetationMaterialAdapter
         return true;
     }
 
-    public static bool TryAdaptMaterials(Material[] sourceMaterials, VegetationShaderAdapterProfile profile, string outputFolder, out Material[] adaptedMaterials, out string error)
+    public static bool TryAdaptMaterials(Material[] sourceMaterials, VegetationShaderAdapterProfile profile, string outputFolder, out Material[] adaptedMaterials, out string error, bool preserveExisting = false)
     {
         error = null;
 
@@ -142,7 +155,7 @@ public static class VegetationMaterialAdapter
 
         for (int i = 0; i < sourceMaterials.Length; i++)
         {
-            if (!TryAdaptMaterial(sourceMaterials[i], profile, outputFolder, out Material adaptedMaterial, out error))
+            if (!TryAdaptMaterial(sourceMaterials[i], profile, outputFolder, out Material adaptedMaterial, out error, preserveExisting))
             {
                 return false;
             }
@@ -174,6 +187,46 @@ public static class VegetationMaterialAdapter
     public static void ClearSessionCache()
     {
         SessionCache.Clear();
+    }
+
+    // Generated materials may have intentional vegetation-specific tuning. Their source
+    // identity + adapter profile + target shader establish the mapping, without overwriting it.
+    // Two different generated material assets still require exact reference equality.
+    internal static bool MaterialMatchesSource(Material candidate, Material source, VegetationShaderAdapterProfile requiredProfile = null)
+    {
+        if (candidate == null || source == null) return false;
+        if (candidate == source) return true;
+        string sourcePath = AssetDatabase.GetAssetPath(source);
+        if (string.IsNullOrEmpty(sourcePath)) return false;
+        string sourceIdentity = AssetDatabase.AssetPathToGUID(sourcePath);
+        if (AssetDatabase.LoadMainAssetAtPath(sourcePath) != source &&
+            AssetDatabase.TryGetGUIDAndLocalFileIdentifier(source, out string _, out long localID))
+            sourceIdentity += ":" + localID;
+        string candidatePath = AssetDatabase.GetAssetPath(candidate);
+        AssetImporter importer = AssetImporter.GetAtPath(candidatePath);
+        string prefix = MarkerPrefix + "|source=" + sourceIdentity + "|profile=";
+        if (importer == null || string.IsNullOrEmpty(importer.userData) ||
+            !importer.userData.StartsWith(prefix, StringComparison.Ordinal)) return false;
+        string profileGuid = importer.userData.Substring(prefix.Length);
+        var profile = AssetDatabase.LoadAssetAtPath<VegetationShaderAdapterProfile>(AssetDatabase.GUIDToAssetPath(profileGuid));
+        return profile != null && (requiredProfile == null || requiredProfile == profile) &&
+            profile.TryGetMapping(source.shader, out var mapping) && candidate.shader == mapping.targetShader;
+    }
+
+    private static bool ConversionMatches(Material source, Material candidate,
+        VegetationShaderAdapterProfile profile, VegetationShaderAdapterProfile.ShaderMapping mapping)
+    {
+        if (candidate.shader != mapping.targetShader) return false;
+        Material expected = new Material(source);
+        try
+        {
+            ApplyConversion(source, expected, profile, mapping);
+            expected.name = candidate.name;
+            expected.hideFlags = candidate.hideFlags;
+            // Includes textures, colours, shader properties/keywords, queue, passes and flags.
+            return string.Equals(EditorJsonUtility.ToJson(expected), EditorJsonUtility.ToJson(candidate), StringComparison.Ordinal);
+        }
+        finally { UnityEngine.Object.DestroyImmediate(expected); }
     }
 
     private static void ApplyConversion(Material sourceMaterial, Material targetMaterial, VegetationShaderAdapterProfile profile, VegetationShaderAdapterProfile.ShaderMapping mapping)

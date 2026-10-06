@@ -51,6 +51,10 @@ Shader "Vegetation/Foliage"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
         #include "VegetationIndirectCommon.hlsl"
+        #include "VegetationLOD.hlsl"
+        #include "VegetationDepthNormals.hlsl"
+        #include "VegetationReceiveShadows.hlsl"
+        #include "VegetationAdditionalLights.hlsl"
         #include "VegetationTerrainCommon.hlsl"
 
         TEXTURE2D(_BaseMap);
@@ -136,6 +140,8 @@ Shader "Vegetation/Foliage"
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_CASCADE
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_SCREEN
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
+            #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
+            #pragma multi_compile_fragment _ _LIGHT_COOKIES
             #pragma multi_compile_fog
 
             struct Attributes
@@ -149,6 +155,7 @@ Shader "Vegetation/Foliage"
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
+                nointerpolation float lodDistance : TEXCOORD15;
                 float3 positionWS : TEXCOORD0;
                 float3 normalWS : TEXCOORD1;
                 float2 uv : TEXCOORD2;
@@ -163,6 +170,7 @@ Shader "Vegetation/Foliage"
                 Varyings output;
 
                 float3 pivotWS = GetVegetationPivotWS(input.instanceID);
+                output.lodDistance = GetVegetationLODDistance(pivotWS);
                 float3 positionWS = TransformVegetationPositionToWorld(input.positionOS,input.instanceID);
                 float3 normalWS = TransformVegetationNormalToWorld(input.normalOS,input.instanceID);
 
@@ -187,6 +195,7 @@ Shader "Vegetation/Foliage"
             {
                 half4 baseSample = SAMPLE_TEXTURE2D(_BaseMap,sampler_BaseMap,input.uv);
                 clip(baseSample.a * _BaseColor.a - _Cutoff);
+                ApplyVegetationLODCrossFade(input.lodDistance, input.positionCS.xy);
 
                 float3 normalWS = normalize(input.normalWS);
                 normalWS = normalize(lerp(normalWS,float3(0,1,0),_NormalUpBlend));
@@ -211,7 +220,7 @@ Shader "Vegetation/Foliage"
                 float wrappedNdotL = saturate((rawNdotL + _LightWrap) / (1.0 + _LightWrap));
                 wrappedNdotL = lerp(_MinimumLight,1.0,wrappedNdotL);
 
-                float shadow = lerp(1.0,mainLight.shadowAttenuation,_ShadowStrength);
+                float shadow = lerp(1.0,VegetationMainLightShadowAttenuation(mainLight.shadowAttenuation),_ShadowStrength);
 
                 half3 directLighting = mainLight.color * wrappedNdotL * mainLight.distanceAttenuation * shadow;
                 half3 ambientLighting = SampleSH(normalWS) * _AmbientStrength;
@@ -227,6 +236,22 @@ Shader "Vegetation/Foliage"
                 translucency *= lerp(1.0,shadow,0.5);
 
                 color += translucency;
+
+                [loop]
+                for (int lightIndex = 0; lightIndex < GetVegetationAdditionalLightsCount(); ++lightIndex)
+                {
+                    Light light = GetVegetationAdditionalLight((uint)lightIndex, input.positionWS, unity_ProbesOcclusion);
+                    float localNdotL = saturate((dot(normalWS, light.direction) + _LightWrap) / (1.0 + _LightWrap));
+                    localNdotL = lerp(_MinimumLight, 1.0, localNdotL);
+                    float localShadow = lerp(1.0, light.shadowAttenuation, _ShadowStrength);
+                    color += albedo * light.color * localNdotL * light.distanceAttenuation * localShadow;
+
+                    float localBackView = pow(saturate(dot(viewDirWS, -light.direction)), _TranslucencyPower);
+                    float localGrazing = 1.0 - saturate(abs(dot(normalWS, light.direction)));
+                    color += albedo * _TranslucencyColor.rgb * light.color * localBackView
+                        * lerp(0.4, 1.0, localGrazing) * _TranslucencyStrength
+                        * light.distanceAttenuation * lerp(1.0, localShadow, 0.5);
+                }
                 color = MixFog(color,input.fogFactor);
 
                 return half4(color,1);
@@ -266,6 +291,7 @@ Shader "Vegetation/Foliage"
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
+                nointerpolation float lodDistance : TEXCOORD15;
                 float2 uv : TEXCOORD0;
                 nointerpolation float shadowCutoff : TEXCOORD1;
             };
@@ -275,6 +301,7 @@ Shader "Vegetation/Foliage"
                 Varyings output;
 
                 float3 pivotWS = GetVegetationPivotWS(input.instanceID);
+                output.lodDistance = GetVegetationLODDistance(pivotWS);
                 float3 positionWS = TransformVegetationPositionToWorld(input.positionOS,input.instanceID);
                 float3 normalWS = TransformVegetationNormalToWorld(input.normalOS,input.instanceID);
 
@@ -306,6 +333,7 @@ Shader "Vegetation/Foliage"
             {
                 half alpha = SAMPLE_TEXTURE2D(_BaseMap,sampler_BaseMap,input.uv).a * _BaseColor.a;
                 clip(alpha - input.shadowCutoff);
+                ApplyVegetationLODCrossFade(input.lodDistance, input.positionCS.xy);
                 return 0;
             }
 
@@ -338,6 +366,7 @@ Shader "Vegetation/Foliage"
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
+                nointerpolation float lodDistance : TEXCOORD15;
                 float2 uv : TEXCOORD0;
             };
 
@@ -346,6 +375,7 @@ Shader "Vegetation/Foliage"
                 Varyings output;
 
                 float3 pivotWS = GetVegetationPivotWS(input.instanceID);
+                output.lodDistance = GetVegetationLODDistance(pivotWS);
                 float3 positionWS = TransformVegetationPositionToWorld(input.positionOS,input.instanceID);
 
                 float heightMask = GetFoliageHeightMask(input.positionOS,input.uv);
@@ -361,9 +391,59 @@ Shader "Vegetation/Foliage"
             {
                 half alpha = SAMPLE_TEXTURE2D(_BaseMap,sampler_BaseMap,input.uv).a * _BaseColor.a;
                 clip(alpha - _Cutoff);
+                ApplyVegetationLODCrossFade(input.lodDistance, input.positionCS.xy);
                 return 0;
             }
 
+            ENDHLSL
+        }
+        Pass
+        {
+            Name "DepthNormalsOnly"
+            Tags { "LightMode"="DepthNormalsOnly" }
+            Cull Off
+            ZWrite On
+            HLSLPROGRAM
+            #pragma target 4.5
+            #pragma vertex DepthNormalsVert
+            #pragma fragment DepthNormalsFrag
+            #pragma multi_compile_fragment _ _GBUFFER_NORMALS_OCT
+
+            struct DNAttributes
+            {
+                float3 positionOS : POSITION;
+                float3 normalOS : NORMAL;
+                float2 uv : TEXCOORD0;
+                uint instanceID : SV_InstanceID;
+            };
+            struct DNVaryings
+            {
+                float4 positionCS : SV_POSITION;
+                nointerpolation float lodDistance : TEXCOORD15;
+                float3 normalWS : TEXCOORD0;
+                float2 uv : TEXCOORD1;
+            };
+            DNVaryings DepthNormalsVert(DNAttributes input)
+            {
+                DNVaryings output;
+                float3 pivotWS = GetVegetationPivotWS(input.instanceID);
+                output.lodDistance = GetVegetationLODDistance(pivotWS);
+                float3 positionWS = TransformVegetationPositionToWorld(input.positionOS,input.instanceID);
+                float heightMask = GetFoliageHeightMask(input.positionOS,input.uv);
+                positionWS = ApplyFoliageForwardWind(positionWS,pivotWS,heightMask);
+                output.positionCS = TransformWorldToHClip(positionWS);
+                output.normalWS = TransformVegetationNormalToWorld(input.normalOS,input.instanceID);
+                output.uv = TRANSFORM_TEX(input.uv,_BaseMap);
+                return output;
+            }
+            half4 DepthNormalsFrag(DNVaryings input) : SV_Target
+            {
+                half alpha = SAMPLE_TEXTURE2D(_BaseMap,sampler_BaseMap,input.uv).a * _BaseColor.a;
+                clip(alpha-_Cutoff);
+                ApplyVegetationLODCrossFade(input.lodDistance,input.positionCS.xy);
+                float3 normalWS = normalize(lerp(normalize(input.normalWS),float3(0,1,0),_NormalUpBlend));
+                return EncodeVegetationDepthNormal(normalWS);
+            }
             ENDHLSL
         }
     }

@@ -34,6 +34,10 @@ public class VegetationProceduralGenerator : MonoBehaviour
     [Header("Generation")]
     public int seed = 12345;
 
+    [SerializeField, HideInInspector] private int generatorID;
+    [SerializeField, HideInInspector] private VegetationDatabase generatorIDDatabase;
+    [SerializeField, HideInInspector] private bool legacyRangesMigrated;
+
     [SerializeField, HideInInspector]
     private List<Vector2Int> generatedIDRanges =
         new List<Vector2Int>();
@@ -129,9 +133,130 @@ public class VegetationProceduralGenerator : MonoBehaviour
         lastGenerationSeconds;
 
     public int GeneratedRangeCount =>
-        generatedIDRanges != null
+        !legacyRangesMigrated && generatedIDRanges != null
             ? generatedIDRanges.Count
             : 0;
+
+    public int GeneratorID => generatorID;
+
+    private void OnEnable()
+    {
+        if (database != null && (generatorID > 0 || GeneratedRangeCount > 0)) EnsureGeneratorIdentity();
+    }
+
+    private bool EnsureGeneratorIdentity()
+    {
+        if (database == null) return false;
+        bool generatorChanged = false;
+        bool databaseChanged = false;
+        bool newlyAllocated = false;
+
+        if (generatorIDDatabase != null && generatorIDDatabase != database)
+        {
+            Debug.LogWarning("VegetationProceduralGenerator changed Database. A new Generation Owner ID will be assigned; legacy ranges belong to the old Database.", this);
+            generatorID = 0;
+            legacyRangesMigrated = true;
+            generatorChanged = true;
+        }
+
+        if (generatorIDDatabase != database)
+        {
+            generatorIDDatabase = database;
+            generatorChanged = true;
+        }
+        if (generatorID <= 0)
+        {
+            generatorID = database.AllocateGenerationOwnerID();
+            generatorChanged = true;
+            databaseChanged = true;
+            newlyAllocated = true;
+        }
+        else databaseChanged = database.ReserveGenerationOwnerID(generatorID);
+
+        VegetationProceduralGenerator[] loadedGenerators = Resources.FindObjectsOfTypeAll<VegetationProceduralGenerator>();
+        for (int i = 0; i < loadedGenerators.Length; i++)
+        {
+            VegetationProceduralGenerator other = loadedGenerators[i];
+            if (other == this || other.database != database || other.generatorID != generatorID ||
+                !other.gameObject.scene.IsValid()) continue;
+            if (newlyAllocated)
+            {
+                generatorID = database.AllocateGenerationOwnerID();
+                i = -1;
+                continue;
+            }
+            Debug.LogWarning("VegetationProceduralGenerator: two loaded Generators share the same Generation Owner ID. Generate and Clear are disabled until the duplicate identity is resolved.", this);
+            return false;
+        }
+
+        if (!legacyRangesMigrated && generatedIDRanges != null && generatedIDRanges.Count > 0)
+        {
+            int migrationBatchID = database.AllocateGenerationBatchID();
+            databaseChanged = true;
+            database.BeginBatchMutation();
+            VegetationLegacyMigrationResult result;
+            List<Vector2Int> conflictingRanges = CollectOtherLegacyRanges();
+            try
+            {
+                result = database.MigrateLegacyGenerationOwnership(
+                    generatorID, migrationBatchID, generatedIDRanges,
+                    persistentID => IsInRanges(persistentID, conflictingRanges));
+            }
+            finally
+            {
+                database.EndBatchMutation();
+            }
+
+            legacyRangesMigrated = true;
+            generatorChanged = true;
+            if (result.conflictCount > 0 || result.missingIDCount > 0)
+            {
+                Debug.LogWarning(
+                    $"VegetationProceduralGenerator legacy migration: migrated {result.migratedCount}, " +
+                    $"conflicting instances {result.conflictCount}, missing IDs {result.missingIDCount} " +
+                    $"across {result.missingRangeCount} empty ranges. " +
+                    "Conflicting claims were left unchanged.", this);
+            }
+        }
+
+#if UNITY_EDITOR
+        if (!Application.isPlaying)
+        {
+            if (databaseChanged) UnityEditor.EditorUtility.SetDirty(database);
+            if (generatorChanged)
+            {
+                UnityEditor.EditorUtility.SetDirty(this);
+                if (gameObject.scene.IsValid()) UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(gameObject.scene);
+                UnityEditor.PrefabUtility.RecordPrefabInstancePropertyModifications(this);
+            }
+        }
+#endif
+        return true;
+    }
+
+    private List<Vector2Int> CollectOtherLegacyRanges()
+    {
+        List<Vector2Int> ranges = new List<Vector2Int>();
+        VegetationProceduralGenerator[] generators = Resources.FindObjectsOfTypeAll<VegetationProceduralGenerator>();
+        for (int i = 0; i < generators.Length; i++)
+        {
+            VegetationProceduralGenerator other = generators[i];
+            if (other == this || other.database != database || !other.gameObject.scene.IsValid() || other.generatedIDRanges == null) continue;
+            ranges.AddRange(other.generatedIDRanges);
+        }
+
+        return ranges;
+    }
+
+    private static bool IsInRanges(int persistentID, List<Vector2Int> ranges)
+    {
+        for (int i = 0; i < ranges.Count; i++)
+        {
+            Vector2Int range = ranges[i];
+            if (persistentID >= Mathf.Min(range.x, range.y) && persistentID <= Mathf.Max(range.x, range.y)) return true;
+        }
+        return false;
+    }
 
     public int LastBiomeMaskRejectCount =>
         lastBiomeMaskRejectCount;
@@ -177,11 +302,13 @@ public class VegetationProceduralGenerator : MonoBehaviour
 
     public int ClearGenerated()
     {
-        if (
-            database == null ||
-            generatedIDRanges == null ||
-            generatedIDRanges.Count == 0
-        )
+        if (database == null)
+        {
+            lastRemovedCount = 0;
+            return 0;
+        }
+
+        if (!EnsureGeneratorIdentity())
         {
             lastRemovedCount = 0;
             return 0;
@@ -193,18 +320,12 @@ public class VegetationProceduralGenerator : MonoBehaviour
 
         try
         {
-            removed =
-                database
-                    .RemoveInstancesByPersistentIDRanges(
-                        generatedIDRanges
-                    );
+            removed = database.RemoveInstancesByGenerationOwner(generatorID);
         }
         finally
         {
             database.EndBatchMutation();
         }
-
-        generatedIDRanges.Clear();
 
         lastRemovedCount =
             removed;
@@ -229,6 +350,9 @@ public class VegetationProceduralGenerator : MonoBehaviour
 
             return 0;
         }
+
+        if (!EnsureGeneratorIdentity()) return 0;
+        int batchID = database.AllocateGenerationBatchID();
 
         if (biome.biomeMask == null)
         {
@@ -271,9 +395,6 @@ public class VegetationProceduralGenerator : MonoBehaviour
         int generatedCount = 0;
         int removedCount = 0;
 
-        int firstGeneratedID = -1;
-        int lastGeneratedID = -1;
-
         lastBiomeMaskRejectCount = 0;
         lastTerrainLayerRejectCount = 0;
         lastTerrainDensityRejectCount = 0;
@@ -285,19 +406,9 @@ public class VegetationProceduralGenerator : MonoBehaviour
 
         try
         {
-            if (
-                clearExisting &&
-                generatedIDRanges != null &&
-                generatedIDRanges.Count > 0
-            )
+            if (clearExisting)
             {
-                removedCount =
-                    database
-                        .RemoveInstancesByPersistentIDRanges(
-                            generatedIDRanges
-                        );
-
-                generatedIDRanges.Clear();
+                removedCount = database.RemoveInstancesByGenerationOwner(generatorID);
             }
 
             int layerCount =
@@ -366,8 +477,7 @@ public class VegetationProceduralGenerator : MonoBehaviour
                         layerIndex,
                         layerCount,
                         progress,
-                        ref firstGeneratedID,
-                        ref lastGeneratedID
+                        batchID
                     );
 
                 generatedCount +=
@@ -386,20 +496,6 @@ public class VegetationProceduralGenerator : MonoBehaviour
             progress?.Invoke(
                 1f,
                 "Finished"
-            );
-        }
-
-        if (
-            firstGeneratedID >= 0 &&
-            lastGeneratedID >=
-            firstGeneratedID
-        )
-        {
-            generatedIDRanges.Add(
-                new Vector2Int(
-                    firstGeneratedID,
-                    lastGeneratedID
-                )
             );
         }
 
@@ -437,8 +533,7 @@ public class VegetationProceduralGenerator : MonoBehaviour
         int layerIndex,
         int layerCount,
         Action<float, string> progress,
-        ref int firstGeneratedID,
-        ref int lastGeneratedID)
+        int batchID)
     {
         float area =
             Mathf.Max(
@@ -859,7 +954,10 @@ public class VegetationProceduralGenerator : MonoBehaviour
                     position,
                     rotation,
                     Vector3.one *
-                    finalScale
+                    finalScale,
+                    VegetationInstanceSource.Procedural,
+                    generatorID,
+                    batchID
                 );
 
             if (
@@ -868,17 +966,6 @@ public class VegetationProceduralGenerator : MonoBehaviour
             {
                 continue;
             }
-
-            if (
-                firstGeneratedID < 0
-            )
-            {
-                firstGeneratedID =
-                    persistentID;
-            }
-
-            lastGeneratedID =
-                persistentID;
 
             spatialHash.Add(
                 position
